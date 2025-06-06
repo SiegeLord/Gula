@@ -5,10 +5,16 @@ use allegro::*;
 use allegro_font::*;
 use na::{
 	Isometry3, Matrix4, Perspective3, Point2, Point3, Quaternion, RealField, Rotation2, Rotation3,
-	Similarity3, Unit, Vector2, Vector3, Vector4,
+	Similarity3, Unit, UnitQuaternion, Vector2, Vector3, Vector4,
 };
 use nalgebra as na;
 use rand::prelude::*;
+use rapier3d::dynamics::{
+	CCDSolver, ImpulseJointSet, IntegrationParameters, IslandManager, MultibodyJointSet,
+	RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
+};
+use rapier3d::geometry::{ColliderBuilder, ColliderSet, DefaultBroadPhase, NarrowPhase};
+use rapier3d::pipeline::{PhysicsPipeline, QueryPipeline};
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -131,15 +137,29 @@ impl Game
 }
 
 pub fn spawn_animal(
-	pos: Point3<f32>, state: &mut game_state::GameState, world: &mut hecs::World,
+	pos: Point3<f32>, state: &mut game_state::GameState, physics: &mut Physics,
+	world: &mut hecs::World,
 ) -> Result<hecs::Entity>
 {
 	let scene_name = "data/sphere.glb";
 	game_state::cache_scene(state, scene_name)?;
+
+	let rigid_body = RigidBodyBuilder::dynamic().translation(pos.coords).build();
+	let collider = ColliderBuilder::ball(0.5).restitution(0.7).build();
+	let ball_body_handle = physics.rigid_body_set.insert(rigid_body);
+	physics.collider_set.insert_with_parent(
+		collider,
+		ball_body_handle,
+		&mut physics.rigid_body_set,
+	);
+
 	let entity = world.spawn((
-		comps::Position::new(pos),
+		comps::Position::new(pos, UnitQuaternion::identity()),
 		comps::Scene {
 			scene: scene_name.to_string(),
+		},
+		comps::Physics {
+			handle: ball_body_handle,
 		},
 	));
 	Ok(entity)
@@ -149,13 +169,72 @@ pub fn spawn_light(
 	pos: Point3<f32>, light: comps::Light, world: &mut hecs::World,
 ) -> Result<hecs::Entity>
 {
-	let entity = world.spawn((comps::Position::new(pos), light));
+	let entity = world.spawn((comps::Position::new(pos, UnitQuaternion::identity()), light));
 	Ok(entity)
+}
+
+pub struct Physics
+{
+	rigid_body_set: RigidBodySet,
+	collider_set: ColliderSet,
+	integration_parameters: IntegrationParameters,
+	physics_pipeline: PhysicsPipeline,
+	island_manager: IslandManager,
+	broad_phase: DefaultBroadPhase,
+	narrow_phase: NarrowPhase,
+	impulse_joint_set: ImpulseJointSet,
+	multibody_joint_set: MultibodyJointSet,
+	ccd_solver: CCDSolver,
+	query_pipeline: QueryPipeline,
+}
+
+impl Physics
+{
+	fn new() -> Self
+	{
+		Self {
+			rigid_body_set: RigidBodySet::new(),
+			collider_set: ColliderSet::new(),
+			integration_parameters: IntegrationParameters {
+				dt: DT as f32,
+				..IntegrationParameters::default()
+			},
+			physics_pipeline: PhysicsPipeline::new(),
+			island_manager: IslandManager::new(),
+			broad_phase: DefaultBroadPhase::new(),
+			narrow_phase: NarrowPhase::new(),
+			impulse_joint_set: ImpulseJointSet::new(),
+			multibody_joint_set: MultibodyJointSet::new(),
+			ccd_solver: CCDSolver::new(),
+			query_pipeline: QueryPipeline::new(),
+		}
+	}
+
+	fn step(&mut self)
+	{
+		let gravity = Vector3::y() * -5.;
+		self.physics_pipeline.step(
+			&gravity,
+			&self.integration_parameters,
+			&mut self.island_manager,
+			&mut self.broad_phase,
+			&mut self.narrow_phase,
+			&mut self.rigid_body_set,
+			&mut self.collider_set,
+			&mut self.impulse_joint_set,
+			&mut self.multibody_joint_set,
+			&mut self.ccd_solver,
+			Some(&mut self.query_pipeline),
+			&(),
+			&(),
+		);
+	}
 }
 
 struct Map
 {
 	world: hecs::World,
+	physics: Physics,
 	camera_target: Point3<f32>,
 	player: hecs::Entity,
 }
@@ -165,13 +244,16 @@ impl Map
 	fn new(state: &mut game_state::GameState) -> Result<Self>
 	{
 		let mut world = hecs::World::new();
-		let player = spawn_animal(Point3::new(0., 1., 0.), state, &mut world)?;
+		let mut physics = Physics::new();
+		let player = spawn_animal(Point3::new(0., 1., 0.), state, &mut physics, &mut world)?;
 
 		game_state::cache_scene(state, "data/level1.glb")?;
 		state.cache_bitmap("data/level1_lightmap.png")?;
 		game_state::cache_scene(state, "data/sphere.glb")?;
 
 		let level_scene = state.get_scene("data/level1.glb").unwrap();
+		let mut vertices = vec![];
+		let mut indices = vec![];
 		for object in &level_scene.objects
 		{
 			if let scene::ObjectKind::Light { color, intensity } = object.kind
@@ -187,10 +269,39 @@ impl Map
 					&mut world,
 				)?;
 			}
+			else if let scene::ObjectKind::MultiMesh { meshes } = &object.kind
+			{
+				let mut index_offset = 0;
+				for mesh in meshes
+				{
+					for vtx in &mesh.vtxs
+					{
+						vertices.push(Point3::new(vtx.x, vtx.y, vtx.z));
+					}
+					for idxs in mesh.idxs.chunks(3)
+					{
+						indices.push([
+							idxs[0] as u32 + index_offset,
+							idxs[1] as u32 + index_offset,
+							idxs[2] as u32 + index_offset,
+						]);
+					}
+					index_offset += mesh.vtxs.len() as u32;
+				}
+			}
 		}
+		let rigid_body = RigidBodyBuilder::fixed().build();
+		let collider = ColliderBuilder::trimesh(vertices, indices)?.build();
+		let rigid_body_handle = physics.rigid_body_set.insert(rigid_body);
+		physics.collider_set.insert_with_parent(
+			collider,
+			rigid_body_handle,
+			&mut physics.rigid_body_set,
+		);
 
 		Ok(Self {
 			world: world,
+			physics: physics,
 			camera_target: Point3::origin(),
 			player: player,
 		})
@@ -209,15 +320,29 @@ impl Map
 
 		if self.world.contains(self.player)
 		{
-			let mut position = self.world.get::<&mut comps::Position>(self.player).unwrap();
 			let left = state.controls.get_action_state(controls::Action::Left);
 			let right = state.controls.get_action_state(controls::Action::Right);
 			let up = state.controls.get_action_state(controls::Action::Up);
 			let down = state.controls.get_action_state(controls::Action::Down);
-			let speed = 5.;
 
-			position.pos.x += (right - left) * speed * DT;
-			position.pos.z += (up - down) * speed * DT;
+			let physics = self.world.get::<&mut comps::Physics>(self.player).unwrap();
+
+			let body = self.physics.rigid_body_set.get_mut(physics.handle).unwrap();
+			let force = 1.;
+			body.reset_forces(true);
+			body.add_force(Vector3::new(left - right, 0., up - down) * force, true);
+		}
+
+		// Physics.
+		self.physics.step();
+		for (_, (pos, physics)) in self
+			.world
+			.query::<(&mut comps::Position, &comps::Physics)>()
+			.iter()
+		{
+			let body = &self.physics.rigid_body_set[physics.handle];
+			pos.pos = Point3::from(*body.translation());
+			pos.rot = *body.rotation();
 		}
 
 		// Movement.
@@ -323,8 +448,11 @@ impl Map
 			.query::<(&comps::Position, &comps::Scene)>()
 			.iter()
 		{
-			let shift = Isometry3::new(position.draw_pos(state.alpha).coords, Vector3::zeros())
-				.to_homogeneous();
+			let shift = Isometry3 {
+				translation: position.draw_pos(state.alpha).coords.into(),
+				rotation: position.draw_rot(state.alpha),
+			}
+			.to_homogeneous();
 
 			state
 				.core

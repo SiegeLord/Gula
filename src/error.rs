@@ -1,3 +1,4 @@
+use rapier3d::geometry::TriMeshBuilderError;
 use std::backtrace::Backtrace;
 use std::{error, fmt};
 
@@ -54,6 +55,18 @@ impl From<hecs::NoSuchEntity> for Error
 impl From<hecs::ComponentError> for Error
 {
 	fn from(error: hecs::ComponentError) -> Self
+	{
+		Self {
+			message: format!("{}", error),
+			inner: Some(Box::new(error)),
+			backtrace: Backtrace::capture(),
+		}
+	}
+}
+
+impl From<TriMeshBuilderError> for Error
+{
+	fn from(error: TriMeshBuilderError) -> Self
 	{
 		Self {
 			message: format!("{}", error),

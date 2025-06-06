@@ -227,17 +227,17 @@ impl Scene
 #[repr(C)]
 pub struct NormVertex
 {
-	x: f32,
-	y: f32,
-	z: f32,
-	u: f32,
-	v: f32,
-	u2: f32,
-	v2: f32,
-	nx: f32,
-	ny: f32,
-	nz: f32,
-	color: Color,
+	pub x: f32,
+	pub y: f32,
+	pub z: f32,
+	pub u: f32,
+	pub v: f32,
+	pub u2: f32,
+	pub v2: f32,
+	pub nx: f32,
+	pub ny: f32,
+	pub nz: f32,
+	pub color: Color,
 }
 
 unsafe impl VertexType for NormVertex
