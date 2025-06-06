@@ -156,11 +156,11 @@ impl Map
 	{
 		let mut world = hecs::World::new();
 		spawn_obj(Point3::new(0., 0., 0.), &mut world)?;
-		game_state::cache_scene(state, "data/test_level_sprytile.glb")?;
-		state.cache_bitmap("data/level_lightmap.png")?;
+		game_state::cache_scene(state, "data/level1.glb")?;
+		state.cache_bitmap("data/level1_lightmap.png")?;
 		game_state::cache_scene(state, "data/sphere.glb")?;
 
-		let level_scene = state.get_scene("data/test_level_sprytile.glb").unwrap();
+		let level_scene = state.get_scene("data/level1.glb").unwrap();
 		for object in &level_scene.objects
 		{
 			if let scene::ObjectKind::Light { color, intensity } = object.kind
@@ -296,10 +296,10 @@ impl Map
 
 		state
 			.core
-			.set_shader_sampler("lightmap", state.get_bitmap("data/level_lightmap.png")?, 1)
+			.set_shader_sampler("lightmap", state.get_bitmap("data/level1_lightmap.png")?, 1)
 			.ok();
 		state
-			.get_scene("data/test_level_sprytile.glb")
+			.get_scene("data/level1.glb")
 			.unwrap()
 			.draw(&state.core, &state.prim, material_mapper);
 
