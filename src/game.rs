@@ -141,7 +141,7 @@ pub fn spawn_animal(
 	world: &mut hecs::World,
 ) -> Result<hecs::Entity>
 {
-	let scene_name = "data/sphere.glb";
+	let scene_name = "data/cat.glb";
 	game_state::cache_scene(state, scene_name)?;
 
 	let rigid_body = RigidBodyBuilder::dynamic().translation(pos.coords).build();

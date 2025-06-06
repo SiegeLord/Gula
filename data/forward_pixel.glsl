@@ -25,6 +25,8 @@ void main()
     albedo_buffer = varying_color * tex_color;
 
     vec4 light = vec4(vec3(0.05), 0.);
+    if (material == DYNAMIC_MATERIAL)
+	light += vec4(vec3(0.25), 0.);
     if (material == STATIC_MATERIAL)
 	light += vec4(lightmap_color.rgb, 0.);
     light_buffer = light;
