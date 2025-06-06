@@ -8,7 +8,11 @@ use crate::utils;
 #[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum Action
 {
-	Move,
+	Left,
+	Right,
+	Up,
+	Down,
+	Jump,
 	UILeft,
 	UIRight,
 	UIUp,
@@ -23,7 +27,11 @@ impl Action
 	{
 		match self
 		{
-			Action::Move => "Move",
+			Action::Left => "Left",
+			Action::Right => "Right",
+			Action::Up => "Up",
+			Action::Down => "Down",
+			Action::Jump => "Jump",
 			Action::UILeft => "UI Left",
 			Action::UIRight => "UI Right",
 			Action::UIUp => "UI Up",
@@ -615,8 +623,39 @@ impl Controls
 	{
 		let mut action_to_inputs = BTreeMap::new();
 		action_to_inputs.insert(
-			Action::Move,
-			[Some(Input::Keyboard(allegro::KeyCode::Space)), None],
+			Action::Up,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::Up)),
+				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 1)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::Down,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::Down)),
+				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 1)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::Left,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::Left)),
+				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 0)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::Right,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::Right)),
+				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 0)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::Jump,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::Space)),
+				Some(Input::JoystickButton(allegro::JoystickButton::A)),
+			],
 		);
 
 		Self {

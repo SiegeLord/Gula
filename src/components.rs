@@ -1,6 +1,6 @@
 use crate::sprite;
 use allegro::*;
-use nalgebra::Point3;
+use nalgebra::{Point3, Vector3};
 use rand::prelude::*;
 
 #[derive(Debug, Copy, Clone)]
@@ -18,10 +18,26 @@ pub struct Position
 	old_pos: Point3<f32>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct Velocity
+{
+	pub pos: Vector3<f32>,
+}
+
+impl Velocity
+{
+	pub fn new() -> Self
+	{
+		Self {
+			pos: Vector3::zeros(),
+		}
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct Scene
 {
-    pub scene: String,
+	pub scene: String,
 }
 
 impl Position

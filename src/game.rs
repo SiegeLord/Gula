@@ -130,9 +130,18 @@ impl Game
 	}
 }
 
-pub fn spawn_obj(pos: Point3<f32>, world: &mut hecs::World) -> Result<hecs::Entity>
+pub fn spawn_animal(
+	pos: Point3<f32>, state: &mut game_state::GameState, world: &mut hecs::World,
+) -> Result<hecs::Entity>
 {
-	let entity = world.spawn((comps::Position::new(pos),));
+	let scene_name = "data/sphere.glb";
+	game_state::cache_scene(state, scene_name)?;
+	let entity = world.spawn((
+		comps::Position::new(pos),
+		comps::Scene {
+			scene: scene_name.to_string(),
+		},
+	));
 	Ok(entity)
 }
 
@@ -148,6 +157,7 @@ struct Map
 {
 	world: hecs::World,
 	camera_target: Point3<f32>,
+	player: hecs::Entity,
 }
 
 impl Map
@@ -155,7 +165,8 @@ impl Map
 	fn new(state: &mut game_state::GameState) -> Result<Self>
 	{
 		let mut world = hecs::World::new();
-		spawn_obj(Point3::new(0., 0., 0.), &mut world)?;
+		let player = spawn_animal(Point3::new(0., 1., 0.), state, &mut world)?;
+
 		game_state::cache_scene(state, "data/level1.glb")?;
 		state.cache_bitmap("data/level1_lightmap.png")?;
 		game_state::cache_scene(state, "data/sphere.glb")?;
@@ -165,6 +176,7 @@ impl Map
 		{
 			if let scene::ObjectKind::Light { color, intensity } = object.kind
 			{
+				println!("Spawning light at {:?}", object.position);
 				spawn_light(
 					object.position,
 					comps::Light {
@@ -177,16 +189,10 @@ impl Map
 			}
 		}
 
-		world.spawn((
-			comps::Position::new(Point3::new(2.5, 1.5, -1.)),
-			comps::Scene {
-				scene: "data/sphere.glb".to_string(),
-			},
-		));
-
 		Ok(Self {
 			world: world,
 			camera_target: Point3::origin(),
+			player: player,
 		})
 	}
 
@@ -195,22 +201,23 @@ impl Map
 	{
 		let mut to_die = vec![];
 
-		let t = state.time() / 3.;
-		self.camera_target = Point3::new(20. * t.cos() as f32 - 2., 1., 20. * t.sin() as f32 - 1.);
-
 		// Position snapshotting.
 		for (_, position) in self.world.query::<&mut comps::Position>().iter()
 		{
 			position.snapshot();
 		}
 
-		// Input.
-		if state.controls.get_action_state(controls::Action::Move) > 0.5
+		if self.world.contains(self.player)
 		{
-			for (_, position) in self.world.query::<&mut comps::Position>().iter()
-			{
-				position.pos.y += 100. * DT;
-			}
+			let mut position = self.world.get::<&mut comps::Position>(self.player).unwrap();
+			let left = state.controls.get_action_state(controls::Action::Left);
+			let right = state.controls.get_action_state(controls::Action::Right);
+			let up = state.controls.get_action_state(controls::Action::Up);
+			let down = state.controls.get_action_state(controls::Action::Down);
+			let speed = 5.;
+
+			position.pos.x += (right - left) * speed * DT;
+			position.pos.z += (up - down) * speed * DT;
 		}
 
 		// Movement.
@@ -250,7 +257,7 @@ impl Map
 
 	fn camera_pos(&self) -> Point3<f32>
 	{
-		Point3::new(4., 2., 0.)
+		self.camera_target + Vector3::new(0., 2., -2.)
 	}
 
 	fn make_camera(&self) -> Isometry3<f32>
@@ -260,6 +267,14 @@ impl Map
 
 	fn draw(&mut self, state: &mut game_state::GameState) -> Result<()>
 	{
+		if self.world.contains(self.player)
+		{
+			{
+				let position = self.world.get::<&comps::Position>(self.player).unwrap();
+				self.camera_target = position.draw_pos(state.alpha);
+			}
+		}
+
 		let project = self.make_project(state);
 		let camera = self.make_camera();
 
