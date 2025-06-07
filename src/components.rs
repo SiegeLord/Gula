@@ -151,14 +151,32 @@ impl Animal
 	}
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct AI {}
+#[derive(Debug, Clone)]
+pub enum AIState
+{
+	Idle,
+	Hunt
+	{
+		path: Vec<Point3<f32>>,
+		target: hecs::Entity,
+	},
+}
+
+#[derive(Debug, Clone)]
+pub struct AI
+{
+	pub state: AIState,
+	pub time_to_replan: f64,
+}
 
 impl AI
 {
 	pub fn new() -> Self
 	{
-		Self {}
+		Self {
+			state: AIState::Idle,
+			time_to_replan: 0.,
+		}
 	}
 }
 

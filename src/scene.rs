@@ -1,3 +1,4 @@
+use crate::astar;
 use crate::error::Result;
 use crate::utils;
 use nalgebra::{Point3, Vector3};
@@ -5,6 +6,8 @@ use serde_derive::{Deserialize, Serialize};
 
 use allegro::*;
 use allegro_primitives::*;
+
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 #[repr(i32)]
@@ -42,11 +45,22 @@ pub struct Mesh
 }
 
 #[derive(Clone, Debug)]
+pub struct NavNode
+{
+	triangle: [Point3<f32>; 3],
+	neighbours: Vec<i32>,
+}
+
+#[derive(Clone, Debug)]
 pub enum ObjectKind
 {
 	MultiMesh
 	{
 		meshes: Vec<Mesh>,
+	},
+	NavMesh
+	{
+		nodes: Vec<NavNode>,
 	},
 	Light
 	{
@@ -81,7 +95,18 @@ impl Scene
 			let (translation, _rot, _scale) = node.transform().decomposed();
 			let position = Point3::new(translation[0], translation[1], translation[2]);
 			let object;
-			if let Some(light) = node.light()
+
+			if node.name().map_or(false, |n| n == "Navmesh")
+			{
+				object = Object {
+					name: node.name().unwrap_or("").to_string(),
+					position: position,
+					kind: ObjectKind::NavMesh {
+						nodes: get_navmesh(&node, &buffers)?,
+					},
+				}
+			}
+			else if let Some(light) = node.light()
 			{
 				let color = light.color();
 				object = Object {
@@ -312,5 +337,109 @@ unsafe impl VertexType for NormVertex
 		}
 
 		VertexDecl::from_builder(prim, &make_builder().unwrap())
+	}
+}
+
+fn get_navmesh(node: &gltf::Node, buffers: &[gltf::buffer::Data]) -> Result<Vec<NavNode>>
+{
+	let mesh = node.mesh();
+	let mesh = mesh.as_ref().ok_or("No mesh in navmesh".to_string())?;
+	let prim = mesh
+		.primitives()
+		.next()
+		.ok_or("No prim in navmesh".to_string())?;
+
+	let mut vtxs = vec![];
+	let mut idxs = vec![];
+	let reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
+	if let Some(pos_iter) = reader.read_positions()
+	{
+		for pos in pos_iter
+		{
+			vtxs.push(Point3::new(pos[0], pos[1], pos[2]));
+		}
+	}
+
+	if let Some(iter) = reader.read_indices()
+	{
+		for idx in iter.into_u32()
+		{
+			idxs.push(idx as i32)
+		}
+	}
+
+	let point_to_idx = |pt1: Point3<f32>, pt2: Point3<f32>| {
+		(
+			(pt1[0] / 0.1) as i32 + (pt2[0] / 0.1) as i32,
+			(pt1[1] / 0.1) as i32 + (pt2[1] / 0.1) as i32,
+			(pt1[2] / 0.1) as i32 + (pt2[2] / 0.1) as i32,
+		)
+	};
+
+	let mut idx_to_triangle = HashMap::new();
+	for (i, triangle) in idxs.chunks(3).enumerate()
+	{
+		for (vtx1_idx, vtx2_idx) in [
+			(triangle[0], triangle[1]),
+			(triangle[1], triangle[2]),
+			(triangle[2], triangle[0]),
+		]
+		{
+			idx_to_triangle
+				.entry(point_to_idx(
+					vtxs[vtx1_idx as usize],
+					vtxs[vtx2_idx as usize],
+				))
+				.or_insert(vec![])
+				.push(i as i32);
+		}
+	}
+
+	let mut ret = vec![];
+	for (i, triangle) in idxs.chunks(3).enumerate()
+	{
+		let mut neighbours = vec![];
+		for (vtx1_idx, vtx2_idx) in [
+			(triangle[0], triangle[1]),
+			(triangle[1], triangle[2]),
+			(triangle[2], triangle[0]),
+		]
+		{
+			for &other_triangle_idx in
+				&idx_to_triangle[&point_to_idx(vtxs[vtx1_idx as usize], vtxs[vtx2_idx as usize])]
+			{
+				if other_triangle_idx == i as i32
+				{
+					continue;
+				}
+				neighbours.push(other_triangle_idx);
+			}
+		}
+		neighbours.sort();
+		neighbours.dedup();
+		let node = NavNode {
+			triangle: [
+				vtxs[triangle[0] as usize],
+				vtxs[triangle[1] as usize],
+				vtxs[triangle[2] as usize],
+			],
+			neighbours: neighbours,
+		};
+		ret.push(node);
+	}
+	Ok(ret)
+}
+
+impl astar::Node for NavNode
+{
+	fn get_pos(&self) -> Point3<f32>
+	{
+		Point3::origin()
+			+ (self.triangle[0].coords + self.triangle[1].coords + self.triangle[2].coords) / 3.
+	}
+
+	fn get_neighbours(&self) -> &[i32]
+	{
+		&self.neighbours
 	}
 }

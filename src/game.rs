@@ -1,3 +1,4 @@
+use crate::astar::Node;
 use crate::error::Result;
 use crate::utils::DT;
 use crate::{astar, components as comps, controls, game_state, scene, sprite, ui, utils};
@@ -479,6 +480,8 @@ struct Map
 	animal_spawns: Vec<Point3<f32>>,
 	time_to_spawn_food: Option<f64>,
 	time_to_snap_camera: f64,
+	navmesh: Vec<scene::NavNode>,
+	show_path: bool,
 }
 
 impl Map
@@ -496,6 +499,7 @@ impl Map
 		let level_scene = state.get_scene(level_scene_name).unwrap();
 		let mut animal_spawns = vec![];
 		let mut food_spawns = vec![];
+		let mut navmesh = vec![];
 		for object in &level_scene.objects
 		{
 			match &object.kind
@@ -524,6 +528,10 @@ impl Map
 						food_spawns.push(object.position);
 					}
 				}
+				scene::ObjectKind::NavMesh { nodes } =>
+				{
+					navmesh = nodes.clone();
+				}
 				_ => (),
 			}
 		}
@@ -535,7 +543,6 @@ impl Map
 			if i == 0
 			{
 				player = Some(entity);
-				break;
 			}
 			else
 			{
@@ -553,6 +560,8 @@ impl Map
 			food_spawns: food_spawns,
 			time_to_spawn_food: Some(0.),
 			time_to_snap_camera: 0.,
+			navmesh: navmesh,
+			show_path: false,
 		})
 	}
 
@@ -587,7 +596,7 @@ impl Map
 
 			if look_left > 0.1 || look_right > 0.1 || look_up > 0.1 || look_down > 0.1
 			{
-				self.time_to_snap_camera = state.time() + 1.0;
+				self.time_to_snap_camera = state.time() + 3.0;
 			}
 
 			let jump = state.controls.get_action_state(controls::Action::Jump);
@@ -633,7 +642,7 @@ impl Map
 			let physics = self.world.get::<&comps::Physics>(self.player).unwrap();
 			let velocity =
 				self.physics.rigid_body_set[physics.handle].velocity_at_point(&position.pos);
-			if velocity.xz().norm() > 0.3 && state.time() > self.time_to_snap_camera
+			if velocity.xz().norm() > 1. && state.time() > self.time_to_snap_camera
 			{
 				let lagging_point =
 					Vector3::new(velocity.x, 0., velocity.z).normalize() - 0.5_f32 * Vector3::y();
@@ -647,49 +656,89 @@ impl Map
 		}
 
 		// AI.
-		for (_, (position, controller, animal, _ai)) in self
+		for (_, (position, controller, animal, ai)) in self
 			.world
 			.query::<(
 				&comps::Position,
 				&mut comps::Controller,
 				&comps::Animal,
-				&comps::AI,
+				&mut comps::AI,
 			)>()
 			.iter()
 		{
-			let mut best_distance = f32::INFINITY;
-			let mut best_food = None;
-			for (_, (food_position, _)) in self
-				.world
-				.query::<(&comps::Position, &comps::Food)>()
-				.iter()
+			controller.want_move = Vector3::zeros();
+			controller.want_jump = false;
+			controller.power = animal.size.sqrt();
+
+			let mut new_state = None;
+			match &mut ai.state
 			{
-				let dist = (position.pos - food_position.pos).norm();
-				if dist < best_distance
+				comps::AIState::Idle =>
 				{
-					best_food = Some(food_position.pos);
-					best_distance = dist;
-				}
-			}
-			if let Some(best_food) = best_food
-			{
-				if best_distance > 0.
-				{
-					let diff = best_food - position.pos;
-					let diff_horiz = diff.xz().normalize();
-					controller.want_move = Vector3::new(diff_horiz.x, 0., diff_horiz.y);
-					if best_distance < 2. && diff.y > 0.5
+					let mut best_distance = f32::INFINITY;
+					let mut best_food = None;
+					for (food_id, (food_position, _)) in self
+						.world
+						.query::<(&comps::Position, &comps::Food)>()
+						.iter()
 					{
-						controller.want_jump = true;
+						let dist = (position.pos - food_position.pos).norm();
+						if dist < best_distance
+						{
+							best_food = Some((food_id, food_position.pos));
+							best_distance = dist;
+						}
+					}
+					if let Some((food_id, food_pos)) = best_food
+					{
+						let mut path = astar::AStarContext::new(&self.navmesh).solve(
+							position.pos,
+							food_pos,
+							|from, to| (from.get_pos() - to.get_pos()).norm(),
+						);
+						path.insert(0, food_pos);
+						path.pop();
+						if !path.is_empty()
+						{
+							new_state = Some(comps::AIState::Hunt {
+								target: food_id,
+								path: path,
+							});
+						}
+					}
+				}
+				comps::AIState::Hunt { target, path } =>
+				{
+					if !self.world.contains(*target)
+						|| path.is_empty() || state.time() > ai.time_to_replan
+					{
+						new_state = Some(comps::AIState::Idle);
+						ai.time_to_replan = state.time() + 1.;
+					}
+					else
+					{
+						let next_pos = path.last().unwrap();
+						let diff = next_pos - position.pos;
+						if diff.norm() < 1.
+						{
+							path.pop();
+						}
+						else
+						{
+							let diff_horiz = diff.xz().normalize();
+							controller.want_move = Vector3::new(diff_horiz.x, 0., diff_horiz.y);
+							if (next_pos.xz() - position.pos.xz()).norm() < 2. && diff.y > 0.5
+							{
+								controller.want_jump = true;
+							}
+						}
 					}
 				}
 			}
-			else
+			if let Some(new_state) = new_state
 			{
-				controller.want_move = Vector3::zeros();
-				controller.want_jump = false;
+				ai.state = new_state;
 			}
-			controller.power = animal.size.sqrt();
 		}
 
 		// Controller.
@@ -866,7 +915,7 @@ impl Map
 						{
 							to_die.push(id);
 							animal.food += 1;
-							animal.new_size += 0.5;
+							animal.new_size += 0.25;
 							self.time_to_spawn_food = Some(state.time() + 1.);
 							break;
 						}
@@ -1028,6 +1077,38 @@ impl Map
 				.get_scene(&scene.scene)
 				.unwrap()
 				.draw(&state.core, &state.prim, material_mapper);
+		}
+
+		if self.show_path
+		{
+			for (_, ai) in self.world.query::<&comps::AI>().iter()
+			{
+				if let comps::AIState::Hunt { path, .. } = &ai.state
+				{
+					for pos in path
+					{
+						let shift = Isometry3 {
+							translation: pos.coords.into(),
+							rotation: UnitQuaternion::identity(),
+						}
+						.to_homogeneous();
+
+						state.core.use_transform(&utils::mat4_to_transform(
+							camera.to_homogeneous() * shift,
+						));
+						state
+							.core
+							.set_shader_transform("model_matrix", &utils::mat4_to_transform(shift))
+							.ok();
+
+						state.get_scene("data/sphere.glb").unwrap().draw(
+							&state.core,
+							&state.prim,
+							material_mapper,
+						);
+					}
+				}
+			}
 		}
 
 		// Light pass.
