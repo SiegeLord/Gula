@@ -42,17 +42,20 @@ pub enum ObjectKind
 {
 	MultiMesh
 	{
-		meshes: Vec<Mesh>
+		meshes: Vec<Mesh>,
 	},
 	Light
 	{
-		intensity: f32, color: Color
+		intensity: f32,
+		color: Color,
 	},
+	Empty,
 }
 
 #[derive(Clone, Debug)]
 pub struct Object
 {
+	pub name: String,
 	pub position: Point3<f32>,
 	pub kind: ObjectKind,
 }
@@ -73,17 +76,18 @@ impl Scene
 		{
 			let (translation, _rot, _scale) = node.transform().decomposed();
 			let position = Point3::new(translation[0], translation[1], translation[2]);
-			let mut object = None;
+			let object;
 			if let Some(light) = node.light()
 			{
 				let color = light.color();
-				object = Some(Object {
+				object = Object {
+					name: node.name().unwrap_or("").to_string(),
 					position: position,
 					kind: ObjectKind::Light {
 						intensity: light.intensity(),
 						color: Color::from_rgb_f(color[0], color[1], color[2]),
 					},
-				});
+				};
 			}
 			else if let Some(mesh) = node.mesh()
 			{
@@ -176,15 +180,21 @@ impl Scene
 						material: material,
 					});
 				}
-				object = Some(Object {
+				object = Object {
+					name: node.name().unwrap_or("").to_string(),
 					position: position,
 					kind: ObjectKind::MultiMesh { meshes: meshes },
-				});
+				};
 			}
-			if let Some(object) = object
+			else
 			{
-				objects.push(object);
+				object = Object {
+					name: node.name().unwrap_or("").to_string(),
+					position: position,
+					kind: ObjectKind::Empty,
+				};
 			}
+			objects.push(object);
 		}
 		Ok(Self { objects: objects })
 	}

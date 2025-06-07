@@ -158,6 +158,11 @@ pub fn spawn_animal(
 		comps::GroundTracker::new(),
 		comps::Controller::new(),
 		comps::Animal::new(),
+		comps::Light {
+			intensity: 105.0,
+			color: Color::from_rgb_f(1., 1., 1.),
+			static_: false,
+		},
 	));
 
 	let rigid_body = RigidBodyBuilder::dynamic()
@@ -325,6 +330,9 @@ struct Map
 	camera_target: comps::Position,
 	player: hecs::Entity,
 	level_body_handle: RigidBodyHandle,
+	food_spawns: Vec<Point3<f32>>,
+	animal_spawns: Vec<Point3<f32>>,
+	time_to_spawn_food: Option<f64>,
 }
 
 impl Map
@@ -333,56 +341,64 @@ impl Map
 	{
 		let mut world = hecs::World::new();
 		let mut physics = Physics::new();
-		let player = spawn_animal(Point3::new(0., 1., -5.), state, &mut physics, &mut world)?;
-
-		let animal = spawn_animal(Point3::new(2., 1., -5.), state, &mut physics, &mut world)?;
-		world.insert_one(animal, comps::AI::new())?;
-		let animal = spawn_animal(Point3::new(3., 1., -5.), state, &mut physics, &mut world)?;
-		world.insert_one(animal, comps::AI::new())?;
-
-		spawn_food(Point3::new(-2., 1., 1.), state, &mut physics, &mut world)?;
-		spawn_food(Point3::new(-4., 1., 1.), state, &mut physics, &mut world)?;
 
 		game_state::cache_scene(state, "data/level1.glb")?;
 		state.cache_bitmap("data/level1_lightmap.png")?;
 		game_state::cache_scene(state, "data/sphere.glb")?;
 
 		let level_scene = state.get_scene("data/level1.glb").unwrap();
+
+		let mut animal_spawns = vec![];
+		let mut food_spawns = vec![];
 		let mut vertices = vec![];
 		let mut indices = vec![];
 		for object in &level_scene.objects
 		{
-			if let scene::ObjectKind::Light { color, intensity } = object.kind
+			match &object.kind
 			{
-				println!("Spawning light at {:?}", object.position);
-				spawn_light(
-					object.position,
-					comps::Light {
-						color: color,
-						intensity: intensity / 50.,
-						static_: true,
-					},
-					&mut world,
-				)?;
-			}
-			else if let scene::ObjectKind::MultiMesh { meshes } = &object.kind
-			{
-				let mut index_offset = 0;
-				for mesh in meshes
+				scene::ObjectKind::Light { color, intensity } =>
 				{
-					for vtx in &mesh.vtxs
+					println!("Spawning light at {:?}", object.position);
+					spawn_light(
+						object.position,
+						comps::Light {
+							color: *color,
+							intensity: intensity / 50.,
+							static_: true,
+						},
+						&mut world,
+					)?;
+				}
+				scene::ObjectKind::MultiMesh { meshes } =>
+				{
+					let mut index_offset = 0;
+					for mesh in meshes
 					{
-						vertices.push(Point3::new(vtx.x, vtx.y, vtx.z));
+						for vtx in &mesh.vtxs
+						{
+							vertices.push(Point3::new(vtx.x, vtx.y, vtx.z));
+						}
+						for idxs in mesh.idxs.chunks(3)
+						{
+							indices.push([
+								idxs[0] as u32 + index_offset,
+								idxs[1] as u32 + index_offset,
+								idxs[2] as u32 + index_offset,
+							]);
+						}
+						index_offset += mesh.vtxs.len() as u32;
 					}
-					for idxs in mesh.idxs.chunks(3)
+				}
+				scene::ObjectKind::Empty =>
+				{
+					if object.name.starts_with("AnimalSpawn")
 					{
-						indices.push([
-							idxs[0] as u32 + index_offset,
-							idxs[1] as u32 + index_offset,
-							idxs[2] as u32 + index_offset,
-						]);
+						animal_spawns.push(object.position);
 					}
-					index_offset += mesh.vtxs.len() as u32;
+					else if object.name.starts_with("FoodSpawn")
+					{
+						food_spawns.push(object.position);
+					}
 				}
 			}
 		}
@@ -395,12 +411,29 @@ impl Map
 			&mut physics.rigid_body_set,
 		);
 
+		let mut player = None;
+		for (i, animal_spawn) in animal_spawns.iter().enumerate()
+		{
+			let entity = spawn_animal(*animal_spawn, state, &mut physics, &mut world)?;
+			if i == 0
+			{
+				player = Some(entity);
+			}
+			else
+			{
+				world.insert_one(entity, comps::AI::new())?;
+			}
+		}
+
 		Ok(Self {
 			world: world,
 			physics: physics,
 			camera_target: comps::Position::new(Point3::origin(), UnitQuaternion::identity()),
 			level_body_handle: rigid_body_handle,
-			player: player,
+			player: player.unwrap(),
+			animal_spawns: animal_spawns,
+			food_spawns: food_spawns,
+			time_to_spawn_food: Some(0.),
 		})
 	}
 
@@ -463,13 +496,19 @@ impl Map
 			{
 				if best_distance > 0.
 				{
-					let diff = (best_food - position.pos).xz().normalize();
-					controller.want_move = Vector3::new(diff.x, 0., diff.y)
+					let diff = best_food - position.pos;
+					let diff_horiz = diff.xz().normalize();
+					controller.want_move = Vector3::new(diff_horiz.x, 0., diff_horiz.y);
+					if best_distance < 2. && diff.y > 0.5
+					{
+						controller.want_jump = true;
+					}
 				}
 			}
 			else
 			{
-				controller.want_move = Vector3::zeros()
+				controller.want_move = Vector3::zeros();
+				controller.want_jump = false;
 			}
 			controller.power = animal.size.sqrt();
 		}
@@ -537,6 +576,17 @@ impl Map
 		}
 
 		// Food.
+		if let Some(time_to_spawn_food) = self.time_to_spawn_food
+		{
+			if state.time() > time_to_spawn_food
+			{
+				self.time_to_spawn_food = None;
+				let mut rng = thread_rng();
+				let spawn = self.food_spawns.choose(&mut rng).unwrap();
+				spawn_food(*spawn, state, &mut self.physics, &mut self.world)?;
+			}
+		}
+
 		for (id, (pos, food, sensor)) in self
 			.world
 			.query::<(&mut comps::Position, &comps::Food, &comps::Sensor)>()
@@ -569,6 +619,7 @@ impl Map
 							to_die.push(id);
 							animal.food += 1;
 							animal.new_size += 1.;
+							self.time_to_spawn_food = Some(state.time() + 1.);
 							break;
 						}
 					}
