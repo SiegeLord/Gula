@@ -153,6 +153,7 @@ pub fn spawn_animal(
 			scene: scene_name.to_string(),
 		},
 		comps::GroundTracker::new(),
+		comps::Controller::new(),
 	));
 
 	let rigid_body = RigidBodyBuilder::dynamic()
@@ -183,6 +184,28 @@ pub fn spawn_light(
 ) -> Result<hecs::Entity>
 {
 	let entity = world.spawn((comps::Position::new(pos, UnitQuaternion::identity()), light));
+	Ok(entity)
+}
+
+pub fn spawn_food(
+	pos: Point3<f32>, state: &mut game_state::GameState, world: &mut hecs::World,
+) -> Result<hecs::Entity>
+{
+	let scene_name = "data/banana.glb";
+	game_state::cache_scene(state, scene_name)?;
+
+	let entity = world.spawn((
+		comps::Position::new(pos, UnitQuaternion::identity()),
+		comps::Food::new(pos),
+		comps::Scene {
+			scene: scene_name.to_string(),
+		},
+		comps::Light {
+			intensity: 105.0,
+			color: Color::from_rgb_f(0.9, 0.9, 0.0),
+			static_: false,
+		},
+	));
 	Ok(entity)
 }
 
@@ -292,7 +315,15 @@ impl Map
 	{
 		let mut world = hecs::World::new();
 		let mut physics = Physics::new();
-		let player = spawn_animal(Point3::new(0., 1., 0.), state, &mut physics, &mut world)?;
+		let player = spawn_animal(Point3::new(0., 1., -5.), state, &mut physics, &mut world)?;
+
+		let animal = spawn_animal(Point3::new(2., 1., -5.), state, &mut physics, &mut world)?;
+		world.insert_one(animal, comps::AI::new())?;
+		let animal = spawn_animal(Point3::new(3., 1., -5.), state, &mut physics, &mut world)?;
+		world.insert_one(animal, comps::AI::new())?;
+
+		spawn_food(Point3::new(3., 1., 1.), state, &mut world)?;
+		spawn_food(Point3::new(6., 1., 1.), state, &mut world)?;
 
 		game_state::cache_scene(state, "data/level1.glb")?;
 		state.cache_bitmap("data/level1_lightmap.png")?;
@@ -366,6 +397,7 @@ impl Map
 			position.snapshot();
 		}
 
+		// Player.
 		if self.world.contains(self.player)
 		{
 			let left = state.controls.get_action_state(controls::Action::Left);
@@ -374,21 +406,66 @@ impl Map
 			let down = state.controls.get_action_state(controls::Action::Down);
 			let jump = state.controls.get_action_state(controls::Action::Jump);
 
-			let physics = self.world.get::<&mut comps::Physics>(self.player).unwrap();
-			let ground_tracker = self
+			let mut controller = self
 				.world
-				.get::<&comps::GroundTracker>(self.player)
+				.get::<&mut comps::Controller>(self.player)
 				.unwrap();
+			controller.want_move = Vector3::new(left - right, 0., up - down);
+			controller.want_jump = jump > 0.5;
+		}
 
+		// AI.
+		for (_, (position, controller, _ai)) in self
+			.world
+			.query::<(&comps::Position, &mut comps::Controller, &comps::AI)>()
+			.iter()
+		{
+			let mut best_distance = f32::INFINITY;
+			let mut best_food = None;
+			for (_, (food_position, _)) in self
+				.world
+				.query::<(&comps::Position, &comps::Food)>()
+				.iter()
+			{
+				let dist = (position.pos - food_position.pos).norm();
+				if dist < best_distance
+				{
+					best_food = Some(food_position.pos);
+					best_distance = dist;
+				}
+			}
+			if let Some(best_food) = best_food
+			{
+				if best_distance > 0.
+				{
+					let diff = (best_food - position.pos).xz().normalize();
+					controller.want_move = Vector3::new(diff.x, 0., diff.y)
+				}
+			}
+		}
+
+		// Controller.
+		for (_, (controller, physics, ground_tracker)) in self
+			.world
+			.query::<(
+				&mut comps::Controller,
+				&comps::Physics,
+				&comps::GroundTracker,
+			)>()
+			.iter()
+		{
 			let body = self.physics.rigid_body_set.get_mut(physics.handle).unwrap();
 			let force = 1.;
 			let jump_impulse = 2.;
 
 			body.reset_forces(true);
-			body.add_force(Vector3::new(left - right, 0., up - down) * force, true);
+			body.add_force(controller.want_move * force, true);
 			if ground_tracker.on_ground
 			{
-				body.apply_impulse(Vector3::new(0., jump, 0.) * jump_impulse, true);
+				body.apply_impulse(
+					Vector3::new(0., controller.want_jump as i32 as f32, 0.) * jump_impulse,
+					true,
+				);
 			}
 		}
 
@@ -427,6 +504,20 @@ impl Map
 					ground_tracker.on_ground = true;
 				}
 			}
+		}
+
+		// Food.
+		for (_, (pos, food)) in self
+			.world
+			.query::<(&mut comps::Position, &comps::Food)>()
+			.iter()
+		{
+			pos.pos =
+				food.spawn_pos + Vector3::new(0., 0.25 * (5. * state.time()).cos() as f32, 0.);
+			pos.rot = UnitQuaternion::from_axis_angle(
+				&Unit::new_normalize(Vector3::y()),
+				((5. * state.time()) % (2. * PI as f64)) as f32,
+			);
 		}
 
 		// Remove dead entities

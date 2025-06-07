@@ -625,28 +625,28 @@ impl Controls
 		action_to_inputs.insert(
 			Action::Up,
 			[
-				Some(Input::Keyboard(allegro::KeyCode::Up)),
+				Some(Input::Keyboard(allegro::KeyCode::W)),
 				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 1)),
 			],
 		);
 		action_to_inputs.insert(
 			Action::Down,
 			[
-				Some(Input::Keyboard(allegro::KeyCode::Down)),
+				Some(Input::Keyboard(allegro::KeyCode::S)),
 				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 1)),
 			],
 		);
 		action_to_inputs.insert(
 			Action::Left,
 			[
-				Some(Input::Keyboard(allegro::KeyCode::Left)),
+				Some(Input::Keyboard(allegro::KeyCode::A)),
 				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 0)),
 			],
 		);
 		action_to_inputs.insert(
 			Action::Right,
 			[
-				Some(Input::Keyboard(allegro::KeyCode::Right)),
+				Some(Input::Keyboard(allegro::KeyCode::D)),
 				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 0)),
 			],
 		);

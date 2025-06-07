@@ -92,3 +92,48 @@ impl GroundTracker
 		Self { on_ground: false }
 	}
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct Controller
+{
+	pub want_move: Vector3<f32>,
+	pub want_jump: bool,
+}
+
+impl Controller
+{
+	pub fn new() -> Self
+	{
+		Self {
+			want_move: Vector3::zeros(),
+			want_jump: false,
+		}
+	}
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct AI {}
+
+impl AI
+{
+	pub fn new() -> Self
+	{
+		Self {}
+	}
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Food
+{
+	pub spawn_pos: Point3<f32>,
+}
+
+impl Food
+{
+	pub fn new(spawn_pos: Point3<f32>) -> Self
+	{
+		Self {
+			spawn_pos: spawn_pos,
+		}
+	}
+}

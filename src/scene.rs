@@ -12,6 +12,7 @@ pub enum MaterialKind
 {
 	Static = 0,
 	Dynamic = 1,
+	Fullbright = 2,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
