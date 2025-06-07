@@ -60,8 +60,9 @@ impl Menu
 		Ok(None)
 	}
 
-	pub fn draw(&mut self, state: &game_state::GameState) -> Result<()>
+	pub fn draw(&mut self, state: &mut game_state::GameState) -> Result<()>
 	{
+		state.hide_mouse = false;
 		state.core.clear_to_color(Color::from_rgb_f(0., 0., 0.5));
 		self.subscreens.draw(state);
 

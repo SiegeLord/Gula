@@ -103,6 +103,7 @@ fn real_main() -> Result<()>
 	let mut old_fullscreen = state.options.fullscreen;
 	let mut old_ui_scale = state.options.ui_scale;
 	let mut old_frac_scale = state.options.frac_scale;
+	let mut switched_in = true;
 
 	let mut prev_frame_start = state.core.get_time();
 	let mut logic_end = prev_frame_start;
@@ -240,8 +241,11 @@ fn real_main() -> Result<()>
 				{
 					state.core.grab_mouse(&display).ok();
 				}
-				display.show_cursor(false).ok();
 				state.track_mouse = true;
+				switched_in = true;
+				display
+					.show_cursor(!state.hide_mouse)
+					.map_err(|_| "Could not hide cursor.".to_string())?;
 			}
 			Event::DisplaySwitchOut { .. } =>
 			{
@@ -249,9 +253,11 @@ fn real_main() -> Result<()>
 				{
 					state.core.ungrab_mouse().ok();
 				}
-				display.show_cursor(true).ok();
 				state.track_mouse = false;
-				state.hide_mouse = false;
+				switched_in = false;
+				display
+					.show_cursor(true)
+					.map_err(|_| "Could not hide cursor.".to_string())?;
 			}
 			Event::MouseButtonDown { .. } =>
 			{
@@ -259,7 +265,6 @@ fn real_main() -> Result<()>
 				{
 					state.core.grab_mouse(&display).ok();
 				}
-				display.show_cursor(false).ok();
 				state.track_mouse = true;
 			}
 			Event::JoystickConfiguration { .. } =>
@@ -285,7 +290,7 @@ fn real_main() -> Result<()>
 					}
 				}
 
-				if state.hide_mouse
+				if state.hide_mouse && switched_in
 				{
 					state
 						.core
@@ -293,7 +298,7 @@ fn real_main() -> Result<()>
 						.map_err(|_| "Couldn't set mouse position".to_string())?;
 				}
 
-				if old_mouse_hide != state.hide_mouse
+				if old_mouse_hide != state.hide_mouse && switched_in
 				{
 					old_mouse_hide = state.hide_mouse;
 					display
@@ -326,12 +331,10 @@ fn real_main() -> Result<()>
 				game_state::NextScreen::Game =>
 				{
 					cur_screen = Screen::Game(game::Game::new(&mut state)?);
-					state.hide_mouse = true;
 				}
 				game_state::NextScreen::Menu =>
 				{
 					cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
-					state.hide_mouse = false;
 				}
 				game_state::NextScreen::Quit =>
 				{

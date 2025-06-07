@@ -75,6 +75,7 @@ impl Game
 		{
 			let mut in_game_menu = false;
 			let handled = false; // In case there's other in-game UI to handle this.
+			state.hide_mouse = true;
 			if state
 				.game_ui_controls
 				.get_action_state(controls::Action::UICancel)
