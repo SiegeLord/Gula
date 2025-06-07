@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::utils;
-use nalgebra::Point3;
+use nalgebra::{Point3, Vector3};
 use serde_derive::{Deserialize, Serialize};
 
 use allegro::*;
@@ -19,7 +19,11 @@ pub enum MaterialKind
 pub struct MaterialDesc
 {
 	pub texture: String,
+	#[serde(default)]
+	pub lightmap: String,
 	pub material_kind: MaterialKind,
+	#[serde(default)]
+	pub two_sided: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +232,36 @@ impl Scene
 						mesh.idxs.len() as u32,
 						PrimType::TriangleList,
 					);
+				}
+			}
+		}
+	}
+
+	pub fn clip_meshes(&mut self, keep_triangle_fn: impl Fn(Vector3<f32>) -> bool)
+	{
+		for object in &mut self.objects
+		{
+			if let ObjectKind::MultiMesh { meshes } = &mut object.kind
+			{
+				for mesh in meshes
+				{
+					let mut new_indices = vec![];
+					for triangle in mesh.idxs.chunks(3)
+					{
+						let v1 = &mesh.vtxs[triangle[0] as usize];
+						let v2 = &mesh.vtxs[triangle[1] as usize];
+						let v3 = &mesh.vtxs[triangle[2] as usize];
+
+						let centre = (Vector3::new(v1.x, v1.y, v1.z)
+							+ Vector3::new(v2.x, v2.y, v2.z)
+							+ Vector3::new(v3.x, v3.y, v3.z))
+							/ 3.;
+						if keep_triangle_fn(centre)
+						{
+							new_indices.extend(triangle.iter().copied());
+						}
+					}
+					mesh.idxs = new_indices;
 				}
 			}
 		}

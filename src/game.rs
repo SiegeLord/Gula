@@ -175,7 +175,7 @@ pub fn spawn_animal(
 	let collider = ColliderBuilder::ball(0.5)
 		.restitution(0.7)
 		.user_data(entity.to_bits().get() as u128)
-		.active_events(ActiveEvents::COLLISION_EVENTS)
+		.active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
 		.build();
 	let ball_body_handle = physics.rigid_body_set.insert(rigid_body);
 	physics.collider_set.insert_with_parent(
@@ -187,6 +187,138 @@ pub fn spawn_animal(
 		entity,
 		comps::Physics {
 			handle: ball_body_handle,
+		},
+	)?;
+	Ok(entity)
+}
+
+pub fn spawn_level(
+	scene_name: &str, state: &mut game_state::GameState, physics: &mut Physics,
+	world: &mut hecs::World,
+) -> Result<hecs::Entity>
+{
+	game_state::cache_scene(state, scene_name)?;
+
+	let entity = world.spawn((
+		comps::Position::new(Point3::origin(), UnitQuaternion::identity()),
+		comps::Scene {
+			scene: scene_name.to_string(),
+		},
+	));
+
+	let level_scene = state.get_scene(scene_name).unwrap();
+	let mut vertices = vec![];
+	let mut indices = vec![];
+	for object in &level_scene.objects
+	{
+		match &object.kind
+		{
+			scene::ObjectKind::MultiMesh { meshes } =>
+			{
+				let mut index_offset = 0;
+				for mesh in meshes
+				{
+					for vtx in &mesh.vtxs
+					{
+						vertices.push(Point3::new(vtx.x, vtx.y, vtx.z));
+					}
+					for idxs in mesh.idxs.chunks(3)
+					{
+						indices.push([
+							idxs[0] as u32 + index_offset,
+							idxs[1] as u32 + index_offset,
+							idxs[2] as u32 + index_offset,
+						]);
+					}
+					index_offset += mesh.vtxs.len() as u32;
+				}
+			}
+			_ => (),
+		}
+	}
+	let rigid_body = RigidBodyBuilder::fixed()
+		.user_data(entity.to_bits().get() as u128)
+		.build();
+	let collider = ColliderBuilder::trimesh(vertices, indices)?
+		.user_data(entity.to_bits().get() as u128)
+		.build();
+	let rigid_body_handle = physics.rigid_body_set.insert(rigid_body);
+	physics.collider_set.insert_with_parent(
+		collider,
+		rigid_body_handle,
+		&mut physics.rigid_body_set,
+	);
+	world.insert_one(
+		entity,
+		comps::Physics {
+			handle: rigid_body_handle,
+		},
+	)?;
+	Ok(entity)
+}
+
+pub fn spawn_shard(
+	scene_name: &str, state: &mut game_state::GameState, physics: &mut Physics,
+	world: &mut hecs::World,
+) -> Result<hecs::Entity>
+{
+	game_state::cache_scene(state, scene_name)?;
+
+	let entity = world.spawn((
+		comps::Position::new(Point3::origin(), UnitQuaternion::identity()),
+		comps::Scene {
+			scene: scene_name.to_string(),
+		},
+	));
+
+	let level_scene = state.get_scene(scene_name).unwrap();
+	let mut vertices = vec![];
+	let mut indices = vec![];
+	for object in &level_scene.objects
+	{
+		match &object.kind
+		{
+			scene::ObjectKind::MultiMesh { meshes } =>
+			{
+				let mut index_offset = 0;
+				for mesh in meshes
+				{
+					for vtx in &mesh.vtxs
+					{
+						vertices.push(Point3::new(vtx.x, vtx.y, vtx.z));
+					}
+					for idxs in mesh.idxs.chunks(3)
+					{
+						indices.push([
+							idxs[0] as u32 + index_offset,
+							idxs[1] as u32 + index_offset,
+							idxs[2] as u32 + index_offset,
+						]);
+					}
+					index_offset += mesh.vtxs.len() as u32;
+				}
+			}
+			_ => (),
+		}
+	}
+	let rigid_body = RigidBodyBuilder::dynamic()
+		.user_data(entity.to_bits().get() as u128)
+		.gravity_scale(0.25)
+		.build();
+	let collider = ColliderBuilder::trimesh(vertices, indices)?
+		.user_data(entity.to_bits().get() as u128)
+		.mass(0.05)
+		.build();
+	let rigid_body_handle = physics.rigid_body_set.insert(rigid_body);
+	physics.collider_set.insert_with_parent(
+		collider,
+		rigid_body_handle,
+		&mut physics.rigid_body_set,
+	);
+	world.insert_one(
+		entity,
+		comps::Physics {
+			handle: rigid_body_handle,
 		},
 	)?;
 	Ok(entity)
@@ -238,6 +370,7 @@ pub fn spawn_food(
 pub struct PhysicsEventHandler
 {
 	collision_events: RwLock<Vec<(CollisionEvent, Option<ContactPair>)>>,
+	contact_force_events: RwLock<Vec<ContactPair>>,
 }
 
 impl PhysicsEventHandler
@@ -246,6 +379,7 @@ impl PhysicsEventHandler
 	{
 		Self {
 			collision_events: RwLock::new(vec![]),
+			contact_force_events: RwLock::new(vec![]),
 		}
 	}
 }
@@ -253,18 +387,26 @@ impl PhysicsEventHandler
 impl EventHandler for PhysicsEventHandler
 {
 	fn handle_collision_event(
-		&self, _bodies: &RigidBodySet, _colliders: &ColliderSet, event: CollisionEvent,
-		contact_pair: Option<&ContactPair>,
+		&self, _bodies: &RigidBodySet, _colliders: &ColliderSet, _event: CollisionEvent,
+		_contact_pair: Option<&ContactPair>,
 	)
 	{
-		let mut events = self.collision_events.write().unwrap();
-		events.push((event, contact_pair.cloned()));
+		//let mut events = self.collision_events.write().unwrap();
+		//events.push((event, contact_pair.cloned()));
 	}
 	fn handle_contact_force_event(
 		&self, _dt: f32, _bodies: &RigidBodySet, _colliders: &ColliderSet,
-		_contact_pair: &ContactPair, _total_force_magnitude: f32,
+		contact_pair: &ContactPair, total_force_magnitude: f32,
 	)
 	{
+		if total_force_magnitude > 2000.0
+		{
+			dbg!(total_force_magnitude);
+			self.contact_force_events
+				.write()
+				.unwrap()
+				.push(contact_pair.clone());
+		}
 	}
 }
 
@@ -332,7 +474,7 @@ struct Map
 	physics: Physics,
 	camera_target: comps::Position,
 	player: hecs::Entity,
-	level_body_handle: RigidBodyHandle,
+	level: hecs::Entity,
 	food_spawns: Vec<Point3<f32>>,
 	animal_spawns: Vec<Point3<f32>>,
 	time_to_spawn_food: Option<f64>,
@@ -346,16 +488,14 @@ impl Map
 		let mut world = hecs::World::new();
 		let mut physics = Physics::new();
 
-		game_state::cache_scene(state, "data/level1.glb")?;
-		state.cache_bitmap("data/level1_lightmap.png")?;
 		game_state::cache_scene(state, "data/sphere.glb")?;
 
-		let level_scene = state.get_scene("data/level1.glb").unwrap();
+		let level_scene_name = "data/level1.glb";
+		let level = spawn_level(level_scene_name, state, &mut physics, &mut world)?;
 
+		let level_scene = state.get_scene(level_scene_name).unwrap();
 		let mut animal_spawns = vec![];
 		let mut food_spawns = vec![];
-		let mut vertices = vec![];
-		let mut indices = vec![];
 		for object in &level_scene.objects
 		{
 			match &object.kind
@@ -373,26 +513,6 @@ impl Map
 						&mut world,
 					)?;
 				}
-				scene::ObjectKind::MultiMesh { meshes } =>
-				{
-					let mut index_offset = 0;
-					for mesh in meshes
-					{
-						for vtx in &mesh.vtxs
-						{
-							vertices.push(Point3::new(vtx.x, vtx.y, vtx.z));
-						}
-						for idxs in mesh.idxs.chunks(3)
-						{
-							indices.push([
-								idxs[0] as u32 + index_offset,
-								idxs[1] as u32 + index_offset,
-								idxs[2] as u32 + index_offset,
-							]);
-						}
-						index_offset += mesh.vtxs.len() as u32;
-					}
-				}
 				scene::ObjectKind::Empty =>
 				{
 					if object.name.starts_with("AnimalSpawn")
@@ -404,16 +524,9 @@ impl Map
 						food_spawns.push(object.position);
 					}
 				}
+				_ => (),
 			}
 		}
-		let rigid_body = RigidBodyBuilder::fixed().build();
-		let collider = ColliderBuilder::trimesh(vertices, indices)?.build();
-		let rigid_body_handle = physics.rigid_body_set.insert(rigid_body);
-		physics.collider_set.insert_with_parent(
-			collider,
-			rigid_body_handle,
-			&mut physics.rigid_body_set,
-		);
 
 		let mut player = None;
 		for (i, animal_spawn) in animal_spawns.iter().enumerate()
@@ -422,6 +535,7 @@ impl Map
 			if i == 0
 			{
 				player = Some(entity);
+				break;
 			}
 			else
 			{
@@ -433,7 +547,7 @@ impl Map
 			world: world,
 			physics: physics,
 			camera_target: comps::Position::new(Point3::origin(), UnitQuaternion::identity()),
-			level_body_handle: rigid_body_handle,
+			level: level,
 			player: player.unwrap(),
 			animal_spawns: animal_spawns,
 			food_spawns: food_spawns,
@@ -606,6 +720,71 @@ impl Map
 		// Physics.
 		let handler = PhysicsEventHandler::new();
 		self.physics.step(&handler);
+		if self.world.contains(self.level)
+		{
+			let mut shards = vec![];
+			{
+				let level_physics = self.world.get::<&comps::Physics>(self.level).unwrap();
+				for contact_pair in handler.contact_force_events.read().unwrap().iter()
+				{
+					let level_collider_handle =
+						self.physics.rigid_body_set[level_physics.handle].colliders()[0];
+					if contact_pair.has_any_active_contact
+						&& (contact_pair.collider1 == level_collider_handle
+							|| contact_pair.collider2 == level_collider_handle)
+					{
+						let mut other_handle = contact_pair.collider1;
+						if contact_pair.collider1 == level_collider_handle
+						{
+							other_handle = contact_pair.collider2;
+						}
+						let other_body = &self.physics.rigid_body_set
+							[self.physics.collider_set[other_handle].parent().unwrap()];
+						to_die.push(self.level);
+
+						let num_shards = 6;
+						let center = other_body.translation();
+						let rot = UnitQuaternion::from_axis_angle(
+							&Unit::new_normalize(Vector3::y()),
+							2. * PI / (num_shards as f32),
+						);
+
+						let mut v1 = Vector3::x();
+						let mut v2 = rot * -v1;
+
+						let scene = state
+							.get_scene(&self.world.get::<&comps::Scene>(self.level)?.scene)
+							.unwrap();
+						for i in 0..6
+						{
+							let mut new_scene = scene.clone();
+							new_scene.clip_meshes(|tri_center| {
+								let diff = tri_center - center;
+								diff.dot(&v1) > 0. && diff.dot(&v2) > 0.
+							});
+							for object in &mut new_scene.objects
+							{
+								if let scene::ObjectKind::MultiMesh { meshes } = &mut object.kind
+								{
+									for mesh in meshes
+									{
+										mesh.material.as_mut().map(|m| m.desc.two_sided = true);
+									}
+								}
+							}
+							shards.push((format!("shard_{i}"), new_scene));
+							v1 = rot * v1;
+							v2 = rot * v2
+						}
+					}
+				}
+			}
+			for (name, scene) in shards
+			{
+				state.insert_scene(&name, scene);
+				spawn_shard(&name, state, &mut self.physics, &mut self.world)?;
+			}
+		}
 
 		for (_, (pos, physics)) in self
 			.world
@@ -617,25 +796,29 @@ impl Map
 			pos.rot = *body.rotation();
 		}
 
-		for (_, (physics, ground_tracker)) in self
-			.world
-			.query::<(&comps::Physics, &mut comps::GroundTracker)>()
-			.iter()
+		if self.world.contains(self.level)
 		{
-			let obj_body = &self.physics.rigid_body_set[physics.handle];
-			let level_body = &self.physics.rigid_body_set[self.level_body_handle];
-			let obj_collider_handle = obj_body.colliders()[0];
-			let level_collider_handle = level_body.colliders()[0];
-
-			ground_tracker.on_ground = false;
-			if let Some(contact_pair) = self
-				.physics
-				.narrow_phase
-				.contact_pair(obj_collider_handle, level_collider_handle)
+			let level_physics = self.world.get::<&comps::Physics>(self.level).unwrap();
+			for (_, (physics, ground_tracker)) in self
+				.world
+				.query::<(&comps::Physics, &mut comps::GroundTracker)>()
+				.iter()
 			{
-				if contact_pair.has_any_active_contact
+				let obj_body = &self.physics.rigid_body_set[physics.handle];
+				let level_body = &self.physics.rigid_body_set[level_physics.handle];
+				let obj_collider_handle = obj_body.colliders()[0];
+				let level_collider_handle = level_body.colliders()[0];
+
+				ground_tracker.on_ground = false;
+				if let Some(contact_pair) = self
+					.physics
+					.narrow_phase
+					.contact_pair(obj_collider_handle, level_collider_handle)
 				{
-					ground_tracker.on_ground = true;
+					if contact_pair.has_any_active_contact
+					{
+						ground_tracker.on_ground = true;
+					}
 				}
 			}
 		}
@@ -683,7 +866,7 @@ impl Map
 						{
 							to_die.push(id);
 							animal.food += 1;
-							animal.new_size += 1.;
+							animal.new_size += 0.5;
 							self.time_to_spawn_food = Some(state.time() + 1.);
 							break;
 						}
@@ -797,28 +980,28 @@ impl Map
 			.use_shader(Some(&*state.forward_shader.upgrade().unwrap()))
 			.unwrap();
 
-		let shift = Isometry3::new(Vector3::zeros(), Vector3::zeros()).to_homogeneous();
-
-		state
-			.core
-			.use_transform(&utils::mat4_to_transform(camera.to_homogeneous() * shift));
-		state
-			.core
-			.set_shader_transform("model_matrix", &utils::mat4_to_transform(shift))
-			.ok();
-
-		let material_mapper = |_material: &scene::Material,
-		                       texture_name: &str|
-		 -> Result<&Bitmap> { state.get_bitmap(texture_name) };
-
-		state
-			.core
-			.set_shader_sampler("lightmap", state.get_bitmap("data/level1_lightmap.png")?, 1)
-			.ok();
-		state
-			.get_scene("data/level1.glb")
-			.unwrap()
-			.draw(&state.core, &state.prim, material_mapper);
+		let material_mapper = |material: &scene::Material, texture_name: &str| -> Result<&Bitmap> {
+			if material.desc.two_sided
+			{
+				unsafe {
+					gl::Disable(gl::CULL_FACE);
+				}
+			}
+			else
+			{
+				unsafe {
+					gl::Enable(gl::CULL_FACE);
+				}
+			}
+			if !material.desc.lightmap.is_empty()
+			{
+				state
+					.core
+					.set_shader_sampler("lightmap", state.get_bitmap(&material.desc.lightmap)?, 1)
+					.ok();
+			}
+			state.get_bitmap(texture_name)
+		};
 
 		for (_, (position, scene)) in self
 			.world

@@ -278,6 +278,11 @@ impl GameState
 		Ok(scene)
 	}
 
+	pub fn insert_scene(&mut self, name: &str, scene: scene::Scene)
+	{
+		self.scenes.insert(name.to_string(), scene);
+	}
+
 	pub fn get_bitmap<'l>(&'l self, name: &str) -> Result<&'l Bitmap>
 	{
 		Ok(self
@@ -321,6 +326,10 @@ pub fn cache_scene(state: &mut GameState, name: &str) -> Result<()>
 				if let Some(material) = mesh.material.as_ref()
 				{
 					textures.push(material.desc.texture.clone());
+					if !material.desc.lightmap.is_empty()
+					{
+						textures.push(material.desc.lightmap.clone());
+					}
 				}
 			}
 		}
