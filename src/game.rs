@@ -13,11 +13,14 @@ use rapier3d::dynamics::{
 	CCDSolver, ImpulseJointSet, IntegrationParameters, IslandManager, MultibodyJointSet,
 	RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
 };
-use rapier3d::geometry::{ColliderBuilder, ColliderSet, DefaultBroadPhase, NarrowPhase};
-use rapier3d::pipeline::{PhysicsPipeline, QueryPipeline};
+use rapier3d::geometry::{
+	ColliderBuilder, ColliderSet, CollisionEvent, ContactPair, DefaultBroadPhase, NarrowPhase,
+};
+use rapier3d::pipeline::{ActiveEvents, EventHandler, PhysicsPipeline, QueryPipeline};
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
+use std::sync::RwLock;
 
 pub struct Game
 {
@@ -144,24 +147,34 @@ pub fn spawn_animal(
 	let scene_name = "data/cat.glb";
 	game_state::cache_scene(state, scene_name)?;
 
-	let rigid_body = RigidBodyBuilder::dynamic().translation(pos.coords).build();
-	let collider = ColliderBuilder::ball(0.5).restitution(0.7).build();
+	let entity = world.spawn((
+		comps::Position::new(pos, UnitQuaternion::identity()),
+		comps::Scene {
+			scene: scene_name.to_string(),
+		},
+		comps::GroundTracker::new(),
+	));
+
+	let rigid_body = RigidBodyBuilder::dynamic()
+		.translation(pos.coords)
+		.user_data(entity.to_bits().get() as u128)
+		.build();
+	let collider = ColliderBuilder::ball(0.5)
+		.restitution(0.7)
+		.active_events(ActiveEvents::COLLISION_EVENTS)
+		.build();
 	let ball_body_handle = physics.rigid_body_set.insert(rigid_body);
 	physics.collider_set.insert_with_parent(
 		collider,
 		ball_body_handle,
 		&mut physics.rigid_body_set,
 	);
-
-	let entity = world.spawn((
-		comps::Position::new(pos, UnitQuaternion::identity()),
-		comps::Scene {
-			scene: scene_name.to_string(),
-		},
+	world.insert_one(
+		entity,
 		comps::Physics {
 			handle: ball_body_handle,
 		},
-	));
+	)?;
 	Ok(entity)
 }
 
@@ -171,6 +184,39 @@ pub fn spawn_light(
 {
 	let entity = world.spawn((comps::Position::new(pos, UnitQuaternion::identity()), light));
 	Ok(entity)
+}
+
+pub struct PhysicsEventHandler
+{
+	collision_events: RwLock<Vec<(CollisionEvent, Option<ContactPair>)>>,
+}
+
+impl PhysicsEventHandler
+{
+	pub fn new() -> Self
+	{
+		Self {
+			collision_events: RwLock::new(vec![]),
+		}
+	}
+}
+
+impl EventHandler for PhysicsEventHandler
+{
+	fn handle_collision_event(
+		&self, _bodies: &RigidBodySet, _colliders: &ColliderSet, event: CollisionEvent,
+		contact_pair: Option<&ContactPair>,
+	)
+	{
+		let mut events = self.collision_events.write().unwrap();
+		events.push((event, contact_pair.cloned()));
+	}
+	fn handle_contact_force_event(
+		&self, _dt: f32, _bodies: &RigidBodySet, _colliders: &ColliderSet,
+		_contact_pair: &ContactPair, _total_force_magnitude: f32,
+	)
+	{
+	}
 }
 
 pub struct Physics
@@ -210,7 +256,7 @@ impl Physics
 		}
 	}
 
-	fn step(&mut self)
+	fn step(&mut self, event_handler: &PhysicsEventHandler)
 	{
 		let gravity = Vector3::y() * -5.;
 		self.physics_pipeline.step(
@@ -226,7 +272,7 @@ impl Physics
 			&mut self.ccd_solver,
 			Some(&mut self.query_pipeline),
 			&(),
-			&(),
+			event_handler,
 		);
 	}
 }
@@ -237,6 +283,7 @@ struct Map
 	physics: Physics,
 	camera_target: Point3<f32>,
 	player: hecs::Entity,
+	level_body_handle: RigidBodyHandle,
 }
 
 impl Map
@@ -303,6 +350,7 @@ impl Map
 			world: world,
 			physics: physics,
 			camera_target: Point3::origin(),
+			level_body_handle: rigid_body_handle,
 			player: player,
 		})
 	}
@@ -324,17 +372,30 @@ impl Map
 			let right = state.controls.get_action_state(controls::Action::Right);
 			let up = state.controls.get_action_state(controls::Action::Up);
 			let down = state.controls.get_action_state(controls::Action::Down);
+			let jump = state.controls.get_action_state(controls::Action::Jump);
 
 			let physics = self.world.get::<&mut comps::Physics>(self.player).unwrap();
+			let ground_tracker = self
+				.world
+				.get::<&comps::GroundTracker>(self.player)
+				.unwrap();
 
 			let body = self.physics.rigid_body_set.get_mut(physics.handle).unwrap();
 			let force = 1.;
+			let jump_impulse = 2.;
+
 			body.reset_forces(true);
 			body.add_force(Vector3::new(left - right, 0., up - down) * force, true);
+			if ground_tracker.on_ground
+			{
+				body.apply_impulse(Vector3::new(0., jump, 0.) * jump_impulse, true);
+			}
 		}
 
 		// Physics.
-		self.physics.step();
+		let handler = PhysicsEventHandler::new();
+		self.physics.step(&handler);
+
 		for (_, (pos, physics)) in self
 			.world
 			.query::<(&mut comps::Position, &comps::Physics)>()
@@ -345,16 +406,28 @@ impl Map
 			pos.rot = *body.rotation();
 		}
 
-		// Movement.
-		//for (_, position) in self.world.query::<&mut comps::Position>().iter()
-		//{
-		//	position.pos.x += 1500. * DT;
-		//	if position.pos.x > state.buffer_width()
-		//	{
-		//		position.pos.x %= state.buffer_width();
-		//		position.snapshot();
-		//	}
-		//}
+		for (_, (physics, ground_tracker)) in self
+			.world
+			.query::<(&comps::Physics, &mut comps::GroundTracker)>()
+			.iter()
+		{
+			let obj_body = &self.physics.rigid_body_set[physics.handle];
+			let level_body = &self.physics.rigid_body_set[self.level_body_handle];
+			let obj_collider_handle = obj_body.colliders()[0];
+			let level_collider_handle = level_body.colliders()[0];
+
+			ground_tracker.on_ground = false;
+			if let Some(contact_pair) = self
+				.physics
+				.narrow_phase
+				.contact_pair(obj_collider_handle, level_collider_handle)
+			{
+				if contact_pair.has_any_active_contact
+				{
+					ground_tracker.on_ground = true;
+				}
+			}
+		}
 
 		// Remove dead entities
 		to_die.sort();

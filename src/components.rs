@@ -78,3 +78,17 @@ pub struct Scene
 {
 	pub scene: String,
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct GroundTracker
+{
+	pub on_ground: bool,
+}
+
+impl GroundTracker
+{
+	pub fn new() -> Self
+	{
+		Self { on_ground: false }
+	}
+}
