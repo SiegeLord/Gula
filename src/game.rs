@@ -14,13 +14,16 @@ use rapier3d::dynamics::{
 	RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
 };
 use rapier3d::geometry::{
-	ColliderBuilder, ColliderSet, CollisionEvent, ContactPair, DefaultBroadPhase, NarrowPhase,
+	Ball, ColliderBuilder, ColliderSet, CollisionEvent, ContactPair, DefaultBroadPhase,
+	NarrowPhase, SharedShape,
 };
 use rapier3d::pipeline::{ActiveEvents, EventHandler, PhysicsPipeline, QueryPipeline};
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::sync::RwLock;
+
+const GROW_TIME: f64 = 1.;
 
 pub struct Game
 {
@@ -154,6 +157,7 @@ pub fn spawn_animal(
 		},
 		comps::GroundTracker::new(),
 		comps::Controller::new(),
+		comps::Animal::new(),
 	));
 
 	let rigid_body = RigidBodyBuilder::dynamic()
@@ -162,6 +166,7 @@ pub fn spawn_animal(
 		.build();
 	let collider = ColliderBuilder::ball(0.5)
 		.restitution(0.7)
+		.user_data(entity.to_bits().get() as u128)
 		.active_events(ActiveEvents::COLLISION_EVENTS)
 		.build();
 	let ball_body_handle = physics.rigid_body_set.insert(rigid_body);
@@ -188,7 +193,8 @@ pub fn spawn_light(
 }
 
 pub fn spawn_food(
-	pos: Point3<f32>, state: &mut game_state::GameState, world: &mut hecs::World,
+	pos: Point3<f32>, state: &mut game_state::GameState, physics: &mut Physics,
+	world: &mut hecs::World,
 ) -> Result<hecs::Entity>
 {
 	let scene_name = "data/banana.glb";
@@ -196,7 +202,6 @@ pub fn spawn_food(
 
 	let entity = world.spawn((
 		comps::Position::new(pos, UnitQuaternion::identity()),
-		comps::Food::new(pos),
 		comps::Scene {
 			scene: scene_name.to_string(),
 		},
@@ -205,7 +210,20 @@ pub fn spawn_food(
 			color: Color::from_rgb_f(0.9, 0.9, 0.0),
 			static_: false,
 		},
+		comps::Food::new(pos),
 	));
+	let collider = ColliderBuilder::ball(0.5)
+		.sensor(true)
+		.translation(pos.coords)
+		.user_data(entity.to_bits().get() as u128)
+		.build();
+	let sensor_handle = physics.collider_set.insert(collider);
+	world.insert_one(
+		entity,
+		comps::Sensor {
+			handle: sensor_handle,
+		},
+	)?;
 	Ok(entity)
 }
 
@@ -265,7 +283,7 @@ impl Physics
 			rigid_body_set: RigidBodySet::new(),
 			collider_set: ColliderSet::new(),
 			integration_parameters: IntegrationParameters {
-				dt: DT as f32,
+				dt: DT,
 				..IntegrationParameters::default()
 			},
 			physics_pipeline: PhysicsPipeline::new(),
@@ -304,7 +322,7 @@ struct Map
 {
 	world: hecs::World,
 	physics: Physics,
-	camera_target: Point3<f32>,
+	camera_target: comps::Position,
 	player: hecs::Entity,
 	level_body_handle: RigidBodyHandle,
 }
@@ -322,8 +340,8 @@ impl Map
 		let animal = spawn_animal(Point3::new(3., 1., -5.), state, &mut physics, &mut world)?;
 		world.insert_one(animal, comps::AI::new())?;
 
-		spawn_food(Point3::new(3., 1., 1.), state, &mut world)?;
-		spawn_food(Point3::new(6., 1., 1.), state, &mut world)?;
+		spawn_food(Point3::new(-2., 1., 1.), state, &mut physics, &mut world)?;
+		spawn_food(Point3::new(-4., 1., 1.), state, &mut physics, &mut world)?;
 
 		game_state::cache_scene(state, "data/level1.glb")?;
 		state.cache_bitmap("data/level1_lightmap.png")?;
@@ -380,7 +398,7 @@ impl Map
 		Ok(Self {
 			world: world,
 			physics: physics,
-			camera_target: Point3::origin(),
+			camera_target: comps::Position::new(Point3::origin(), UnitQuaternion::identity()),
 			level_body_handle: rigid_body_handle,
 			player: player,
 		})
@@ -406,18 +424,25 @@ impl Map
 			let down = state.controls.get_action_state(controls::Action::Down);
 			let jump = state.controls.get_action_state(controls::Action::Jump);
 
+			let animal = self.world.get::<&comps::Animal>(self.player).unwrap();
 			let mut controller = self
 				.world
 				.get::<&mut comps::Controller>(self.player)
 				.unwrap();
 			controller.want_move = Vector3::new(left - right, 0., up - down);
 			controller.want_jump = jump > 0.5;
+			controller.power = animal.size.powf(2.);
 		}
 
 		// AI.
-		for (_, (position, controller, _ai)) in self
+		for (_, (position, controller, animal, _ai)) in self
 			.world
-			.query::<(&comps::Position, &mut comps::Controller, &comps::AI)>()
+			.query::<(
+				&comps::Position,
+				&mut comps::Controller,
+				&comps::Animal,
+				&comps::AI,
+			)>()
 			.iter()
 		{
 			let mut best_distance = f32::INFINITY;
@@ -442,6 +467,11 @@ impl Map
 					controller.want_move = Vector3::new(diff.x, 0., diff.y)
 				}
 			}
+			else
+			{
+				controller.want_move = Vector3::zeros()
+			}
+			controller.power = animal.size.sqrt();
 		}
 
 		// Controller.
@@ -455,8 +485,8 @@ impl Map
 			.iter()
 		{
 			let body = self.physics.rigid_body_set.get_mut(physics.handle).unwrap();
-			let force = 1.;
-			let jump_impulse = 2.;
+			let force = 1. * controller.power;
+			let jump_impulse = 2. * controller.power;
 
 			body.reset_forces(true);
 			body.add_force(controller.want_move * force, true);
@@ -507,9 +537,9 @@ impl Map
 		}
 
 		// Food.
-		for (_, (pos, food)) in self
+		for (id, (pos, food, sensor)) in self
 			.world
-			.query::<(&mut comps::Position, &comps::Food)>()
+			.query::<(&mut comps::Position, &comps::Food, &comps::Sensor)>()
 			.iter()
 		{
 			pos.pos =
@@ -518,6 +548,59 @@ impl Map
 				&Unit::new_normalize(Vector3::y()),
 				((5. * state.time()) % (2. * PI as f64)) as f32,
 			);
+
+			for (collider_handle1, collider_handle2, intersecting) in self
+				.physics
+				.narrow_phase
+				.intersection_pairs_with(sensor.handle)
+			{
+				let mut other_handle = collider_handle1;
+				if other_handle == sensor.handle
+				{
+					other_handle = collider_handle2;
+				}
+				if intersecting
+				{
+					let other_collider = self.physics.collider_set.get(other_handle).unwrap();
+					if let Some(id2) = hecs::Entity::from_bits(other_collider.user_data as u64)
+					{
+						if let Ok(mut animal) = self.world.get::<&mut comps::Animal>(id2)
+						{
+							to_die.push(id);
+							animal.food += 1;
+							animal.new_size += 1.;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		// Animal.
+		for (_, (pos, animal, physics)) in self
+			.world
+			.query::<(&mut comps::Position, &mut comps::Animal, &comps::Physics)>()
+			.iter()
+		{
+			if animal.size >= animal.new_size
+			{
+				animal.size = animal.new_size;
+				continue;
+			}
+
+			animal.size += DT / GROW_TIME as f32;
+			pos.scale = animal.size;
+
+			let body = &self.physics.rigid_body_set[physics.handle];
+			let collider = self
+				.physics
+				.collider_set
+				.get_mut(body.colliders()[0])
+				.unwrap();
+
+			collider.set_shape(SharedShape::new(Ball {
+				radius: 0.5 * animal.size,
+			}));
 		}
 
 		// Remove dead entities
@@ -525,6 +608,26 @@ impl Map
 		to_die.dedup();
 		for id in to_die
 		{
+			if let Ok(physics) = self.world.get::<&comps::Physics>(id)
+			{
+				self.physics.rigid_body_set.remove(
+					physics.handle,
+					&mut self.physics.island_manager,
+					&mut self.physics.collider_set,
+					&mut self.physics.impulse_joint_set,
+					&mut self.physics.multibody_joint_set,
+					true,
+				);
+			}
+			if let Ok(sensor) = self.world.get::<&comps::Sensor>(id)
+			{
+				self.physics.collider_set.remove(
+					sensor.handle,
+					&mut self.physics.island_manager,
+					&mut self.physics.rigid_body_set,
+					true,
+				);
+			}
 			//println!("died {id:?}");
 			self.world.despawn(id)?;
 		}
@@ -544,14 +647,15 @@ impl Map
 		utils::projection_transform(state.buffer_width(), state.buffer_height(), PI / 3.)
 	}
 
-	fn camera_pos(&self) -> Point3<f32>
+	fn camera_pos(&self, alpha: f32) -> Point3<f32>
 	{
-		self.camera_target + Vector3::new(0., 2., -2.)
+		self.camera_target.draw_pos(alpha)
+			+ Vector3::new(0., 2., -2.) * self.camera_target.draw_scale(alpha)
 	}
 
-	fn make_camera(&self) -> Isometry3<f32>
+	fn make_camera(&self, alpha: f32) -> Isometry3<f32>
 	{
-		utils::make_camera(self.camera_pos(), self.camera_target)
+		utils::make_camera(self.camera_pos(alpha), self.camera_target.draw_pos(alpha))
 	}
 
 	fn draw(&mut self, state: &mut game_state::GameState) -> Result<()>
@@ -560,12 +664,12 @@ impl Map
 		{
 			{
 				let position = self.world.get::<&comps::Position>(self.player).unwrap();
-				self.camera_target = position.draw_pos(state.alpha);
+				self.camera_target = *position;
 			}
 		}
 
 		let project = self.make_project(state);
-		let camera = self.make_camera();
+		let camera = self.make_camera(state.alpha);
 
 		// Forward pass.
 		state
@@ -617,13 +721,15 @@ impl Map
 				rotation: position.draw_rot(state.alpha),
 			}
 			.to_homogeneous();
+			let scale =
+				Similarity3::from_scaling(position.draw_scale(state.alpha)).to_homogeneous();
 
+			state.core.use_transform(&utils::mat4_to_transform(
+				camera.to_homogeneous() * shift * scale,
+			));
 			state
 				.core
-				.use_transform(&utils::mat4_to_transform(camera.to_homogeneous() * shift));
-			state
-				.core
-				.set_shader_transform("model_matrix", &utils::mat4_to_transform(shift))
+				.set_shader_transform("model_matrix", &utils::mat4_to_transform(shift * scale))
 				.ok();
 
 			state
@@ -637,7 +743,7 @@ impl Map
 			&state.core,
 			state.light_shader.clone(),
 			&utils::mat4_to_transform(project.to_homogeneous()),
-			self.camera_pos(),
+			self.camera_pos(state.alpha),
 		)?;
 
 		for (_, (position, light)) in self

@@ -3,6 +3,7 @@ use allegro::*;
 use nalgebra::{Point3, Quaternion, Unit, Vector3};
 use rand::prelude::*;
 use rapier3d::dynamics::RigidBodyHandle;
+use rapier3d::geometry::ColliderHandle;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Light
@@ -20,6 +21,9 @@ pub struct Position
 
 	pub rot: Unit<Quaternion<f32>>,
 	old_rot: Unit<Quaternion<f32>>,
+
+	pub scale: f32,
+	old_scale: f32,
 }
 
 impl Position
@@ -31,6 +35,8 @@ impl Position
 			old_pos: pos,
 			rot,
 			old_rot: rot,
+			scale: 1.,
+			old_scale: 1.,
 		}
 	}
 
@@ -38,6 +44,7 @@ impl Position
 	{
 		self.old_pos = self.pos;
 		self.old_rot = self.rot;
+		self.old_scale = self.scale;
 	}
 
 	pub fn draw_pos(&self, alpha: f32) -> Point3<f32>
@@ -48,6 +55,11 @@ impl Position
 	pub fn draw_rot(&self, alpha: f32) -> Unit<Quaternion<f32>>
 	{
 		self.old_rot.slerp(&self.rot, alpha)
+	}
+
+	pub fn draw_scale(&self, alpha: f32) -> f32
+	{
+		self.scale + alpha * (self.scale - self.old_scale)
 	}
 }
 
@@ -71,6 +83,12 @@ impl Velocity
 pub struct Physics
 {
 	pub handle: RigidBodyHandle,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Sensor
+{
+	pub handle: ColliderHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +116,7 @@ pub struct Controller
 {
 	pub want_move: Vector3<f32>,
 	pub want_jump: bool,
+	pub power: f32,
 }
 
 impl Controller
@@ -107,6 +126,27 @@ impl Controller
 		Self {
 			want_move: Vector3::zeros(),
 			want_jump: false,
+			power: 1.0,
+		}
+	}
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Animal
+{
+	pub food: i32,
+	pub size: f32,
+	pub new_size: f32,
+}
+
+impl Animal
+{
+	pub fn new() -> Self
+	{
+		Self {
+			food: 0,
+			size: 1.,
+			new_size: 1.,
 		}
 	}
 }
