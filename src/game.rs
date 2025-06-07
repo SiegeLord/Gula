@@ -81,6 +81,7 @@ impl Game
 				> 0.5
 			{
 				in_game_menu = true;
+				state.hide_mouse = false;
 			}
 			else if !handled
 			{
@@ -117,6 +118,7 @@ impl Game
 			if self.subscreens.is_empty()
 			{
 				state.controls.clear_action_states();
+				state.hide_mouse = true;
 			}
 		}
 		Ok(None)
@@ -333,6 +335,7 @@ struct Map
 	food_spawns: Vec<Point3<f32>>,
 	animal_spawns: Vec<Point3<f32>>,
 	time_to_spawn_food: Option<f64>,
+	time_to_snap_camera: f64,
 }
 
 impl Map
@@ -434,6 +437,7 @@ impl Map
 			animal_spawns: animal_spawns,
 			food_spawns: food_spawns,
 			time_to_spawn_food: Some(0.),
+			time_to_snap_camera: 0.,
 		})
 	}
 
@@ -447,14 +451,30 @@ impl Map
 		{
 			position.snapshot();
 		}
+		self.camera_target.snapshot();
 
 		// Player.
 		if self.world.contains(self.player)
 		{
-			let left = state.controls.get_action_state(controls::Action::Left);
-			let right = state.controls.get_action_state(controls::Action::Right);
-			let up = state.controls.get_action_state(controls::Action::Up);
-			let down = state.controls.get_action_state(controls::Action::Down);
+			let move_left = state.controls.get_action_state(controls::Action::MoveLeft);
+			let move_right = state.controls.get_action_state(controls::Action::MoveRight);
+			let move_fwd = state
+				.controls
+				.get_action_state(controls::Action::MoveForward);
+			let move_bwd = state
+				.controls
+				.get_action_state(controls::Action::MoveBackward);
+
+			let look_left = state.controls.get_action_state(controls::Action::LookLeft);
+			let look_right = state.controls.get_action_state(controls::Action::LookRight);
+			let look_up = state.controls.get_action_state(controls::Action::LookUp);
+			let look_down = state.controls.get_action_state(controls::Action::LookDown);
+
+			if look_left > 0.1 || look_right > 0.1 || look_up > 0.1 || look_down > 0.1
+			{
+				self.time_to_snap_camera = state.time() + 1.0;
+			}
+
 			let jump = state.controls.get_action_state(controls::Action::Jump);
 
 			let animal = self.world.get::<&comps::Animal>(self.player).unwrap();
@@ -462,9 +482,53 @@ impl Map
 				.world
 				.get::<&mut comps::Controller>(self.player)
 				.unwrap();
-			controller.want_move = Vector3::new(left - right, 0., up - down);
 			controller.want_jump = jump > 0.5;
 			controller.power = animal.size.powf(2.);
+
+			let position = self.world.get::<&comps::Position>(self.player).unwrap();
+
+			let forward = self.camera_target.rot * (-Vector3::z());
+			let right = Unit::new_normalize(Vector3::new(-forward.z, 0., forward.x));
+			let up = Unit::new_normalize(Vector3::y());
+
+			let rot_horiz = UnitQuaternion::from_axis_angle(
+				&up,
+				state.options.camera_speed * DT * (look_left - look_right),
+			);
+			let mut rot_vert = UnitQuaternion::from_axis_angle(
+				&right,
+				state.options.camera_speed * DT * (look_up - look_down),
+			);
+			if forward.dot(&up) > 0.99 && (look_up - look_down) > 0.
+			{
+				rot_vert = UnitQuaternion::identity();
+			}
+			if forward.dot(&up) < -0.99 && (look_up - look_down) < 0.
+			{
+				rot_vert = UnitQuaternion::identity();
+			}
+			self.camera_target.rot = rot_horiz * rot_vert * self.camera_target.rot;
+
+			let forward2 = self.camera_target.rot * (Vector3::z());
+			let forward2 = Vector3::new(forward2.x, 0., forward2.z).normalize();
+			let right2 = Vector3::new(-forward2.z, 0., forward2.x).normalize();
+			controller.want_move =
+				(move_fwd - move_bwd) * forward2 + (move_right - move_left) * right2;
+
+			let physics = self.world.get::<&comps::Physics>(self.player).unwrap();
+			let velocity =
+				self.physics.rigid_body_set[physics.handle].velocity_at_point(&position.pos);
+			if velocity.xz().norm() > 0.3 && state.time() > self.time_to_snap_camera
+			{
+				let lagging_point =
+					Vector3::new(velocity.x, 0., velocity.z).normalize() - 0.5_f32 * Vector3::y();
+				let lagging_rot = UnitQuaternion::look_at_rh(&(-lagging_point), &Vector3::y());
+
+				self.camera_target.rot = self.camera_target.rot.slerp(&lagging_rot.inverse(), DT);
+			}
+
+			self.camera_target.pos = position.pos;
+			self.camera_target.scale = position.scale;
 		}
 
 		// AI.
@@ -695,13 +759,14 @@ impl Map
 
 	fn make_project(&self, state: &game_state::GameState) -> Perspective3<f32>
 	{
-		utils::projection_transform(state.buffer_width(), state.buffer_height(), PI / 3.)
+		utils::projection_transform(state.buffer_width(), state.buffer_height(), PI / 2.)
 	}
 
 	fn camera_pos(&self, alpha: f32) -> Point3<f32>
 	{
 		self.camera_target.draw_pos(alpha)
-			+ Vector3::new(0., 2., -2.) * self.camera_target.draw_scale(alpha)
+			+ self.camera_target.draw_rot(alpha)
+				* (2. * self.camera_target.draw_scale(alpha) * -Vector3::z())
 	}
 
 	fn make_camera(&self, alpha: f32) -> Isometry3<f32>
@@ -711,14 +776,6 @@ impl Map
 
 	fn draw(&mut self, state: &mut game_state::GameState) -> Result<()>
 	{
-		if self.world.contains(self.player)
-		{
-			{
-				let position = self.world.get::<&comps::Position>(self.player).unwrap();
-				self.camera_target = *position;
-			}
-		}
-
 		let project = self.make_project(state);
 		let camera = self.make_camera(state.alpha);
 

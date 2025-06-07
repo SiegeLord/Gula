@@ -98,10 +98,8 @@ fn real_main() -> Result<()>
 
 	let mut quit = false;
 
-	//let mut cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
-	let mut cur_screen = Screen::Game(game::Game::new(&mut state)?);
-
 	let mut logics_without_draw = 0;
+	let mut old_mouse_hide = state.hide_mouse;
 	let mut old_fullscreen = state.options.fullscreen;
 	let mut old_ui_scale = state.options.ui_scale;
 	let mut old_frac_scale = state.options.frac_scale;
@@ -113,7 +111,10 @@ fn real_main() -> Result<()>
 	{
 		state.core.grab_mouse(&display).ok();
 	}
-	//display.show_cursor(false).ok();
+
+	//let mut cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
+	let mut cur_screen = Screen::Game(game::Game::new(&mut state)?);
+	state.hide_mouse = true;
 
 	timer.start();
 	while !quit
@@ -239,7 +240,7 @@ fn real_main() -> Result<()>
 				{
 					state.core.grab_mouse(&display).ok();
 				}
-				//display.show_cursor(false).ok();
+				display.show_cursor(false).ok();
 				state.track_mouse = true;
 			}
 			Event::DisplaySwitchOut { .. } =>
@@ -248,8 +249,9 @@ fn real_main() -> Result<()>
 				{
 					state.core.ungrab_mouse().ok();
 				}
-				//display.show_cursor(true).ok();
+				display.show_cursor(true).ok();
 				state.track_mouse = false;
+				state.hide_mouse = false;
 			}
 			Event::MouseButtonDown { .. } =>
 			{
@@ -257,7 +259,7 @@ fn real_main() -> Result<()>
 				{
 					state.core.grab_mouse(&display).ok();
 				}
-				//display.show_cursor(false).ok();
+				display.show_cursor(false).ok();
 				state.track_mouse = true;
 			}
 			Event::JoystickConfiguration { .. } =>
@@ -281,6 +283,22 @@ fn real_main() -> Result<()>
 						Screen::Game(game) => game.logic(&mut state)?,
 						_ => None,
 					}
+				}
+
+				if state.hide_mouse
+				{
+					state
+						.core
+						.set_mouse_xy(&display, display.get_width() / 2, display.get_height() / 2)
+						.map_err(|_| "Couldn't set mouse position".to_string())?;
+				}
+
+				if old_mouse_hide != state.hide_mouse
+				{
+					old_mouse_hide = state.hide_mouse;
+					display
+						.show_cursor(!state.hide_mouse)
+						.map_err(|_| "Could not hide cursor.".to_string())?;
 				}
 
 				if old_fullscreen != state.options.fullscreen
@@ -308,10 +326,12 @@ fn real_main() -> Result<()>
 				game_state::NextScreen::Game =>
 				{
 					cur_screen = Screen::Game(game::Game::new(&mut state)?);
+					state.hide_mouse = true;
 				}
 				game_state::NextScreen::Menu =>
 				{
 					cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
+					state.hide_mouse = false;
 				}
 				game_state::NextScreen::Quit =>
 				{

@@ -8,10 +8,14 @@ use crate::utils;
 #[derive(PartialEq, Eq, Hash, Serialize, Deserialize, Copy, Clone, Debug, PartialOrd, Ord)]
 pub enum Action
 {
-	Left,
-	Right,
-	Up,
-	Down,
+	MoveLeft,
+	MoveRight,
+	MoveForward,
+	MoveBackward,
+	LookLeft,
+	LookRight,
+	LookUp,
+	LookDown,
 	Jump,
 	UILeft,
 	UIRight,
@@ -27,10 +31,14 @@ impl Action
 	{
 		match self
 		{
-			Action::Left => "Left",
-			Action::Right => "Right",
-			Action::Up => "Up",
-			Action::Down => "Down",
+			Action::MoveLeft => "Move Left",
+			Action::MoveRight => "Move Right",
+			Action::MoveForward => "Move Forward",
+			Action::MoveBackward => "Move Backward",
+			Action::LookLeft => "Look Left",
+			Action::LookRight => "Look Right",
+			Action::LookUp => "Look Up",
+			Action::LookDown => "Look Down",
 			Action::Jump => "Jump",
 			Action::UILeft => "UI Left",
 			Action::UIRight => "UI Right",
@@ -623,31 +631,71 @@ impl Controls
 	{
 		let mut action_to_inputs = BTreeMap::new();
 		action_to_inputs.insert(
-			Action::Up,
-			[
-				Some(Input::Keyboard(allegro::KeyCode::W)),
-				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 1)),
-			],
-		);
-		action_to_inputs.insert(
-			Action::Down,
-			[
-				Some(Input::Keyboard(allegro::KeyCode::S)),
-				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 1)),
-			],
-		);
-		action_to_inputs.insert(
-			Action::Left,
+			Action::MoveLeft,
 			[
 				Some(Input::Keyboard(allegro::KeyCode::A)),
 				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 0)),
 			],
 		);
 		action_to_inputs.insert(
-			Action::Right,
+			Action::MoveRight,
 			[
 				Some(Input::Keyboard(allegro::KeyCode::D)),
 				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 0)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::MoveForward,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::W)),
+				Some(Input::JoystickNegAxis(allegro::JoystickStick::LeftThumb, 1)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::MoveBackward,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::S)),
+				Some(Input::JoystickPosAxis(allegro::JoystickStick::LeftThumb, 1)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::LookLeft,
+			[
+				Some(Input::MouseXNeg),
+				Some(Input::JoystickNegAxis(
+					allegro::JoystickStick::RightThumb,
+					0,
+				)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::LookRight,
+			[
+				Some(Input::MouseXPos),
+				Some(Input::JoystickPosAxis(
+					allegro::JoystickStick::RightThumb,
+					0,
+				)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::LookUp,
+			[
+				Some(Input::MouseYPos),
+				Some(Input::JoystickPosAxis(
+					allegro::JoystickStick::RightThumb,
+					1,
+				)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::LookDown,
+			[
+				Some(Input::MouseYNeg),
+				Some(Input::JoystickNegAxis(
+					allegro::JoystickStick::RightThumb,
+					1,
+				)),
 			],
 		);
 		action_to_inputs.insert(

@@ -30,6 +30,7 @@ pub enum Action
 	ToggleFracScale,
 	ChangeInput(controls::Action, usize),
 	MouseSensitivity(f32),
+	CameraSpeed(f32),
 	UiScale(f32),
 	MusicVolume(f32),
 	SfxVolume(f32),
@@ -907,20 +908,18 @@ impl ControlsMenu
 		let h = BUTTON_HEIGHT;
 
 		let mut widgets = vec![];
-		// widgets.push(vec![
-		// 	Widget::Label(Label::new(0., 0., w * 1.5, h, "MOUSE SENSITIVITY")),
-		// 	Widget::Slider(Slider::new(
-		// 		0.,
-		// 		0.,
-		// 		w,
-		// 		h,
-		// 		state.controls.get_mouse_sensitivity(),
-		// 		0.,
-		// 		2.,
-		// 		false,
-		// 		|i| Action::MouseSensitivity(i),
-		// 	)),
-		// ]);
+		widgets.push(vec![
+			Widget::Label(Label::new(w * 1.5, h, "Mouse Sensitivity")),
+			Widget::Slider(Slider::new(
+				w,
+				h,
+				state.controls.get_mouse_sensitivity(),
+				0.,
+				2.,
+				0.1,
+				|i| Action::MouseSensitivity(i),
+			)),
+		]);
 
 		for (&action, &inputs) in state.controls.get_actions_to_inputs()
 		{
@@ -1136,18 +1135,18 @@ impl OptionsMenu
 			//		|i| Action::UiScale(i),
 			//	)),
 			//],
-			//vec![
-			//	Widget::Label(Label::new(w, h, "Scroll")),
-			//	Widget::Slider(Slider::new(
-			//		w,
-			//		h,
-			//		state.options.camera_speed as f32,
-			//		1.,
-			//		10.,
-			//		1.,
-			//		|i| Action::CameraSpeed(i as i32),
-			//	)),
-			//],
+			vec![
+				Widget::Label(Label::new(w, h, "Camera Speed")),
+				Widget::Slider(Slider::new(
+					w,
+					h,
+					state.options.camera_speed as f32,
+					1.,
+					10.,
+					0.25,
+					|i| Action::CameraSpeed(i),
+				)),
+			],
 			vec![Widget::Button(Button::new(w, h, "Back", Action::Back))],
 		];
 
@@ -1191,6 +1190,10 @@ impl OptionsMenu
 				Action::UiScale(v) =>
 				{
 					state.options.ui_scale = v;
+				}
+				Action::CameraSpeed(cs) =>
+				{
+					state.options.camera_speed = cs;
 				}
 				Action::Back =>
 				{
