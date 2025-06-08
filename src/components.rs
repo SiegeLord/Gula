@@ -194,15 +194,18 @@ pub struct AI
 {
 	pub state: AIState,
 	pub time_to_replan: f64,
+	pub reproduce_threshold: f32,
 }
 
 impl AI
 {
 	pub fn new() -> Self
 	{
+		let mut rng = thread_rng();
 		Self {
 			state: AIState::Idle,
 			time_to_replan: 0.,
+			reproduce_threshold: rng.gen_range(1.0..3.05),
 		}
 	}
 }
@@ -228,6 +231,25 @@ impl Food
 		Self {
 			spawn_pos: spawn_pos,
 			kind: kind,
+		}
+	}
+}
+
+pub struct FoodSpawner
+{
+	pub food: hecs::Entity,
+	pub time_to_spawn: f64,
+	pub waiting: bool,
+}
+
+impl FoodSpawner
+{
+	pub fn new() -> Self
+	{
+		Self {
+			food: hecs::Entity::DANGLING,
+			time_to_spawn: 0.0,
+			waiting: true,
 		}
 	}
 }

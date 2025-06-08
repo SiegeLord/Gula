@@ -25,6 +25,7 @@ use std::f32::consts::PI;
 use std::sync::RwLock;
 
 const GROW_TIME: f64 = 1.;
+const PHI: f32 = 1.618033988749;
 
 pub struct Game
 {
@@ -384,6 +385,15 @@ pub fn spawn_food(
 	Ok(entity)
 }
 
+pub fn spawn_food_spawner(pos: Point3<f32>, world: &mut hecs::World) -> Result<hecs::Entity>
+{
+	let entity = world.spawn((
+		comps::Position::new(pos, UnitQuaternion::identity()),
+		comps::FoodSpawner::new(),
+	));
+	Ok(entity)
+}
+
 pub struct PhysicsEventHandler
 {
 	collision_events: RwLock<Vec<(CollisionEvent, Option<ContactPair>)>>,
@@ -493,9 +503,6 @@ struct Map
 	player: hecs::Entity,
 	player_kind: comps::AnimalKind,
 	level: hecs::Entity,
-	food_spawns: Vec<Point3<f32>>,
-	animal_spawns: Vec<Point3<f32>>,
-	time_to_spawn_food: Option<f64>,
 	time_to_snap_camera: f64,
 	navmesh: Vec<scene::NavNode>,
 	show_path: bool,
@@ -599,6 +606,11 @@ impl Map
 			}
 		}
 
+		for food_spawn in food_spawns
+		{
+			spawn_food_spawner(food_spawn, &mut world)?;
+		}
+
 		Ok(Self {
 			world: world,
 			physics: physics,
@@ -606,9 +618,6 @@ impl Map
 			level: level,
 			player: player.unwrap(),
 			player_kind: player_kind,
-			animal_spawns: animal_spawns,
-			food_spawns: food_spawns,
-			time_to_spawn_food: Some(0.),
 			time_to_snap_camera: 0.,
 			navmesh: navmesh,
 			show_path: false,
@@ -746,7 +755,7 @@ impl Map
 			{
 				comps::AIState::Idle =>
 				{
-					if animal.fat > 1
+					if animal.size > ai.reproduce_threshold
 					{
 						controller.want_reproduce = true;
 					}
@@ -802,7 +811,9 @@ impl Map
 						{
 							let diff_horiz = diff.xz().normalize();
 							controller.want_move = Vector3::new(diff_horiz.x, 0., diff_horiz.y);
-							if (next_pos.xz() - position.pos.xz()).norm() < 2. && diff.y > 0.5
+							let mut rng = thread_rng();
+							if ((next_pos.xz() - position.pos.xz()).norm() < 2. && diff.y > 0.5)
+								|| rng.gen_bool((0.2 * DT) as f64)
 							{
 								controller.want_jump = true;
 							}
@@ -848,7 +859,7 @@ impl Map
 			.query::<(&comps::Position, &mut comps::Controller, &mut comps::Animal)>()
 			.iter()
 		{
-			controller.power = 1. + animal.muscle as f32;
+			controller.power = 1. + (0.5 * animal.muscle as f32 + 0.75 * animal.size).powf(3.);
 			if animal.fat > 1 && controller.want_reproduce
 			{
 				let fat = animal.fat;
@@ -856,7 +867,7 @@ impl Map
 				animal.muscle = 0;
 				animal.new_size = 1.;
 
-				animals_to_add.push((position.pos, fat, animal.kind));
+				animals_to_add.push((position.pos, fat - 1, animal.kind));
 			}
 		}
 		for (pos, fat, kind) in animals_to_add
@@ -904,7 +915,7 @@ impl Map
 						{
 							if let Ok(animal) = self.world.get::<&comps::Animal>(other_id)
 							{
-								crash = animal.size >= 2.;
+								crash = animal.size >= 6.;
 							}
 						}
 						if !crash
@@ -971,9 +982,9 @@ impl Map
 		if self.world.contains(self.level)
 		{
 			let level_physics = self.world.get::<&comps::Physics>(self.level).unwrap();
-			for (_, (physics, ground_tracker)) in self
+			for (_, (position, physics, ground_tracker)) in self
 				.world
-				.query::<(&comps::Physics, &mut comps::GroundTracker)>()
+				.query::<(&comps::Position, &comps::Physics, &mut comps::GroundTracker)>()
 				.iter()
 			{
 				let obj_body = &self.physics.rigid_body_set[physics.handle];
@@ -989,25 +1000,49 @@ impl Map
 				{
 					if contact_pair.has_any_active_contact
 					{
-						ground_tracker.on_ground = true;
+						for manifold in &contact_pair.manifolds
+						{
+							for point in &manifold.points
+							{
+								if point.local_p1.y < position.pos.y - 0.2
+								{
+									ground_tracker.on_ground = true;
+								}
+							}
+						}
 					}
 				}
 			}
 		}
 
 		// Food.
-		if let Some(time_to_spawn_food) = self.time_to_spawn_food
+		let mut spawn_foods = vec![];
+		for (id, (position, food_spawner)) in self
+			.world
+			.query::<(&comps::Position, &mut comps::FoodSpawner)>()
+			.iter()
 		{
-			if state.time() > time_to_spawn_food
+			if !self.world.contains(food_spawner.food) && !food_spawner.waiting
 			{
-				self.time_to_spawn_food = None;
-				let mut rng = thread_rng();
-				let spawn = self.food_spawns.choose(&mut rng).unwrap();
-				let kind = *([comps::FoodKind::Fat, comps::FoodKind::Muscle])
-					.choose(&mut rng)
-					.unwrap();
-				spawn_food(*spawn, kind, state, &mut self.physics, &mut self.world)?;
+				food_spawner.time_to_spawn = state.time() + 10.0;
+				food_spawner.waiting = true;
 			}
+			if state.time() > food_spawner.time_to_spawn
+			{
+				food_spawner.waiting = false;
+				food_spawner.time_to_spawn = std::f64::INFINITY;
+				spawn_foods.push((id, position.pos));
+			}
+		}
+		for (parent, pos) in spawn_foods
+		{
+			let mut rng = thread_rng();
+			let kind = *([comps::FoodKind::Fat, comps::FoodKind::Muscle])
+				.choose(&mut rng)
+				.unwrap();
+			let food = spawn_food(pos, kind, state, &mut self.physics, &mut self.world)?;
+			let mut food_spawner = self.world.get::<&mut comps::FoodSpawner>(parent)?;
+			food_spawner.food = food;
 		}
 
 		for (id, (pos, food, sensor)) in self
@@ -1045,15 +1080,15 @@ impl Map
 								comps::FoodKind::Fat =>
 								{
 									animal.fat += 1;
-									animal.new_size += 0.25;
+									animal.new_size *= PHI;
 								}
 								comps::FoodKind::Muscle =>
 								{
 									animal.muscle += 1;
-									animal.new_size += 0.05;
+									animal.new_size *= PHI.sqrt();
 								}
 							}
-							self.time_to_spawn_food = Some(state.time() + 1.);
+							dbg!(animal.new_size);
 							break;
 						}
 					}
@@ -1092,7 +1127,7 @@ impl Map
 		// Abyss
 		for (id, position) in self.world.query::<&mut comps::Position>().iter()
 		{
-			if position.pos.y < -5.
+			if position.pos.y < -10.
 			{
 				to_die.push(id);
 			}
