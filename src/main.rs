@@ -242,10 +242,6 @@ fn real_main() -> Result<()>
 					state.core.grab_mouse(&display).ok();
 				}
 				state.track_mouse = true;
-				switched_in = true;
-				display
-					.show_cursor(!state.hide_mouse)
-					.map_err(|_| "Could not hide cursor.".to_string())?;
 			}
 			Event::DisplaySwitchOut { .. } =>
 			{
@@ -266,6 +262,13 @@ fn real_main() -> Result<()>
 					state.core.grab_mouse(&display).ok();
 				}
 				state.track_mouse = true;
+				if !switched_in
+				{
+					display
+						.show_cursor(!state.hide_mouse)
+						.map_err(|_| "Could not hide cursor.".to_string())?;
+				}
+				switched_in = true;
 			}
 			Event::JoystickConfiguration { .. } =>
 			{
