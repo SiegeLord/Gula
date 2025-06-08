@@ -116,6 +116,7 @@ pub struct Controller
 {
 	pub want_move: Vector3<f32>,
 	pub want_jump: bool,
+	pub want_reproduce: bool,
 	pub power: f32,
 }
 
@@ -126,6 +127,7 @@ impl Controller
 		Self {
 			want_move: Vector3::zeros(),
 			want_jump: false,
+			want_reproduce: false,
 			power: 1.0,
 		}
 	}
@@ -134,7 +136,8 @@ impl Controller
 #[derive(Debug, Copy, Clone)]
 pub struct Animal
 {
-	pub food: i32,
+	pub fat: i32,
+	pub muscle: i32,
 	pub size: f32,
 	pub new_size: f32,
 }
@@ -144,7 +147,8 @@ impl Animal
 	pub fn new() -> Self
 	{
 		Self {
-			food: 0,
+			fat: 0,
+			muscle: 0,
 			size: 1.,
 			new_size: 1.,
 		}
@@ -181,17 +185,26 @@ impl AI
 }
 
 #[derive(Debug, Copy, Clone)]
+pub enum FoodKind
+{
+	Muscle,
+	Fat,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct Food
 {
 	pub spawn_pos: Point3<f32>,
+	pub kind: FoodKind,
 }
 
 impl Food
 {
-	pub fn new(spawn_pos: Point3<f32>) -> Self
+	pub fn new(spawn_pos: Point3<f32>, kind: FoodKind) -> Self
 	{
 		Self {
 			spawn_pos: spawn_pos,
+			kind: kind,
 		}
 	}
 }

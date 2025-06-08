@@ -334,11 +334,22 @@ pub fn spawn_light(
 }
 
 pub fn spawn_food(
-	pos: Point3<f32>, state: &mut game_state::GameState, physics: &mut Physics,
-	world: &mut hecs::World,
+	pos: Point3<f32>, kind: comps::FoodKind, state: &mut game_state::GameState,
+	physics: &mut Physics, world: &mut hecs::World,
 ) -> Result<hecs::Entity>
 {
-	let scene_name = "data/banana.glb";
+	let scene_name;
+	match kind
+	{
+		comps::FoodKind::Fat =>
+		{
+			scene_name = "data/cupcake.glb";
+		}
+		comps::FoodKind::Muscle =>
+		{
+			scene_name = "data/banana.glb";
+		}
+	}
 	game_state::cache_scene(state, scene_name)?;
 
 	let entity = world.spawn((
@@ -351,7 +362,7 @@ pub fn spawn_food(
 			color: Color::from_rgb_f(0.9, 0.9, 0.0),
 			static_: false,
 		},
-		comps::Food::new(pos),
+		comps::Food::new(pos, kind),
 	));
 	let collider = ColliderBuilder::ball(0.5)
 		.sensor(true)
@@ -601,13 +612,13 @@ impl Map
 
 			let jump = state.controls.get_action_state(controls::Action::Jump);
 
-			let animal = self.world.get::<&comps::Animal>(self.player).unwrap();
 			let mut controller = self
 				.world
 				.get::<&mut comps::Controller>(self.player)
 				.unwrap();
 			controller.want_jump = jump > 0.5;
-			controller.power = animal.size.powf(2.);
+			controller.want_reproduce =
+				state.controls.get_action_state(controls::Action::Reproduce) > 0.5;
 
 			let position = self.world.get::<&comps::Position>(self.player).unwrap();
 
@@ -656,7 +667,7 @@ impl Map
 		}
 
 		// AI.
-		for (_, (position, controller, animal, ai)) in self
+		for (_, (position, controller, _animal, ai)) in self
 			.world
 			.query::<(
 				&comps::Position,
@@ -668,7 +679,6 @@ impl Map
 		{
 			controller.want_move = Vector3::zeros();
 			controller.want_jump = false;
-			controller.power = animal.size.sqrt();
 
 			let mut new_state = None;
 			match &mut ai.state
@@ -766,6 +776,39 @@ impl Map
 			}
 		}
 
+		// Controller-animal interaction
+		let mut animals_to_add = vec![];
+		for (_, (position, controller, animal)) in self
+			.world
+			.query::<(&comps::Position, &mut comps::Controller, &mut comps::Animal)>()
+			.iter()
+		{
+			controller.power = (1. + animal.muscle as f32).powf(2.);
+			if animal.fat > 1 && controller.want_reproduce
+			{
+				let fat = animal.fat;
+				animal.fat = 0;
+				animal.muscle = 0;
+				animal.new_size = 1.;
+
+				animals_to_add.push((position.pos, fat));
+			}
+		}
+		for (pos, fat) in animals_to_add
+		{
+			let mut rng = thread_rng();
+			for _ in 0..fat
+			{
+				let entity = spawn_animal(
+					pos + Vector3::new(rng.gen_range(-1.0..1.), 0., rng.gen_range(-1.0..1.)) * 0.1,
+					state,
+					&mut self.physics,
+					&mut self.world,
+				)?;
+				self.world.insert_one(entity, comps::AI::new())?;
+			}
+		}
+
 		// Physics.
 		let handler = PhysicsEventHandler::new();
 		self.physics.step(&handler);
@@ -789,6 +832,20 @@ impl Map
 						}
 						let other_body = &self.physics.rigid_body_set
 							[self.physics.collider_set[other_handle].parent().unwrap()];
+
+						let mut crash = false;
+						if let Some(other_id) = hecs::Entity::from_bits(other_body.user_data as u64)
+						{
+							if let Ok(animal) = self.world.get::<&comps::Animal>(other_id)
+							{
+								crash = animal.size > 4.;
+							}
+						}
+						if !crash
+						{
+							continue;
+						}
+
 						to_die.push(self.level);
 
 						let num_shards = 6;
@@ -880,7 +937,10 @@ impl Map
 				self.time_to_spawn_food = None;
 				let mut rng = thread_rng();
 				let spawn = self.food_spawns.choose(&mut rng).unwrap();
-				spawn_food(*spawn, state, &mut self.physics, &mut self.world)?;
+				let kind = *([comps::FoodKind::Fat, comps::FoodKind::Muscle])
+					.choose(&mut rng)
+					.unwrap();
+				spawn_food(*spawn, kind, state, &mut self.physics, &mut self.world)?;
 			}
 		}
 
@@ -914,8 +974,19 @@ impl Map
 						if let Ok(mut animal) = self.world.get::<&mut comps::Animal>(id2)
 						{
 							to_die.push(id);
-							animal.food += 1;
-							animal.new_size += 0.25;
+							match food.kind
+							{
+								comps::FoodKind::Fat =>
+								{
+									animal.fat += 1;
+									animal.new_size += 0.25;
+								}
+								comps::FoodKind::Muscle =>
+								{
+									animal.muscle += 1;
+									animal.new_size += 0.05;
+								}
+							}
 							self.time_to_spawn_food = Some(state.time() + 1.);
 							break;
 						}
@@ -930,13 +1001,14 @@ impl Map
 			.query::<(&mut comps::Position, &mut comps::Animal, &comps::Physics)>()
 			.iter()
 		{
-			if animal.size >= animal.new_size
+			let change = DT / GROW_TIME as f32;
+			if (animal.size - animal.new_size).abs() < change
 			{
 				animal.size = animal.new_size;
 				continue;
 			}
 
-			animal.size += DT / GROW_TIME as f32;
+			animal.size += (animal.new_size - animal.size).signum() * change;
 			pos.scale = animal.size;
 
 			let body = &self.physics.rigid_body_set[physics.handle];

@@ -17,6 +17,7 @@ pub enum Action
 	LookUp,
 	LookDown,
 	Jump,
+	Reproduce,
 	UILeft,
 	UIRight,
 	UIUp,
@@ -40,6 +41,7 @@ impl Action
 			Action::LookUp => "Look Up",
 			Action::LookDown => "Look Down",
 			Action::Jump => "Jump",
+			Action::Reproduce => "Reproduce",
 			Action::UILeft => "UI Left",
 			Action::UIRight => "UI Right",
 			Action::UIUp => "UI Up",
@@ -703,6 +705,13 @@ impl Controls
 			[
 				Some(Input::Keyboard(allegro::KeyCode::Space)),
 				Some(Input::JoystickButton(allegro::JoystickButton::A)),
+			],
+		);
+		action_to_inputs.insert(
+			Action::Reproduce,
+			[
+				Some(Input::Keyboard(allegro::KeyCode::R)),
+				Some(Input::JoystickButton(allegro::JoystickButton::B)),
 			],
 		);
 
