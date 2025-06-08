@@ -133,6 +133,27 @@ impl Controller
 	}
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AnimalKind
+{
+	Cat,
+	Zebra,
+	Rhino,
+}
+
+impl AnimalKind
+{
+	pub fn icon(&self) -> &str
+	{
+		match self
+		{
+			AnimalKind::Cat => "data/cat_icon.png",
+			AnimalKind::Zebra => "data/zebra_icon.png",
+			AnimalKind::Rhino => "data/rhino_icon.png",
+		}
+	}
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Animal
 {
@@ -140,17 +161,19 @@ pub struct Animal
 	pub muscle: i32,
 	pub size: f32,
 	pub new_size: f32,
+	pub kind: AnimalKind,
 }
 
 impl Animal
 {
-	pub fn new() -> Self
+	pub fn new(kind: AnimalKind) -> Self
 	{
 		Self {
 			fat: 0,
 			muscle: 0,
 			size: 1.,
 			new_size: 1.,
+			kind: kind,
 		}
 	}
 }

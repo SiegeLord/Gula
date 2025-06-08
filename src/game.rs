@@ -147,11 +147,16 @@ impl Game
 }
 
 pub fn spawn_animal(
-	pos: Point3<f32>, state: &mut game_state::GameState, physics: &mut Physics,
-	world: &mut hecs::World,
+	pos: Point3<f32>, kind: comps::AnimalKind, state: &mut game_state::GameState,
+	physics: &mut Physics, world: &mut hecs::World,
 ) -> Result<hecs::Entity>
 {
-	let scene_name = "data/cat.glb";
+	let scene_name = match kind
+	{
+		comps::AnimalKind::Cat => "data/cat.glb",
+		comps::AnimalKind::Rhino => "data/rhino.glb",
+		comps::AnimalKind::Zebra => "data/zebra.glb",
+	};
 	game_state::cache_scene(state, scene_name)?;
 
 	let entity = world.spawn((
@@ -161,7 +166,7 @@ pub fn spawn_animal(
 		},
 		comps::GroundTracker::new(),
 		comps::Controller::new(),
-		comps::Animal::new(),
+		comps::Animal::new(kind),
 		comps::Light {
 			intensity: 105.0,
 			color: Color::from_rgb_f(1., 1., 1.),
@@ -486,6 +491,7 @@ struct Map
 	physics: Physics,
 	camera_target: comps::Position,
 	player: hecs::Entity,
+	player_kind: comps::AnimalKind,
 	level: hecs::Entity,
 	food_spawns: Vec<Point3<f32>>,
 	animal_spawns: Vec<Point3<f32>>,
@@ -503,6 +509,11 @@ impl Map
 		let mut physics = Physics::new();
 
 		game_state::cache_scene(state, "data/sphere.glb")?;
+		state.cache_bitmap("data/cat_icon.png")?;
+		state.cache_bitmap("data/zebra_icon.png")?;
+		state.cache_bitmap("data/rhino_icon.png")?;
+		state.cache_bitmap("data/fat_icon.png")?;
+		state.cache_bitmap("data/muscle_icon.png")?;
 
 		let level_scene_name = "data/level1.glb";
 		let level = spawn_level(level_scene_name, state, &mut physics, &mut world)?;
@@ -547,13 +558,40 @@ impl Map
 			}
 		}
 
+		let mut rng = thread_rng();
+
+		let mut animals = [
+			comps::AnimalKind::Rhino,
+			comps::AnimalKind::Zebra,
+			comps::AnimalKind::Cat,
+		];
+
+		animals.shuffle(&mut rng);
+
 		let mut player = None;
-		for (i, animal_spawn) in animal_spawns.iter().enumerate()
+		let mut player_kind = animals[0];
+		for i in 0..3
 		{
-			let entity = spawn_animal(*animal_spawn, state, &mut physics, &mut world)?;
+			let kind = if i < animals.len()
+			{
+				animals[i]
+			}
+			else
+			{
+				*animals[1..].choose(&mut rng).unwrap()
+			};
+			let entity = spawn_animal(
+				animal_spawns.choose(&mut rng).unwrap()
+					+ Vector3::new(rng.gen_range(-1.0..1.0), 0., rng.gen_range(-1.0..1.0)) * 0.1,
+				kind,
+				state,
+				&mut physics,
+				&mut world,
+			)?;
 			if i == 0
 			{
 				player = Some(entity);
+				player_kind = kind;
 			}
 			else
 			{
@@ -567,6 +605,7 @@ impl Map
 			camera_target: comps::Position::new(Point3::origin(), UnitQuaternion::identity()),
 			level: level,
 			player: player.unwrap(),
+			player_kind: player_kind,
 			animal_spawns: animal_spawns,
 			food_spawns: food_spawns,
 			time_to_spawn_food: Some(0.),
@@ -588,6 +627,38 @@ impl Map
 		}
 		self.camera_target.snapshot();
 
+		let look_left = state.controls.get_action_state(controls::Action::LookLeft);
+		let look_right = state.controls.get_action_state(controls::Action::LookRight);
+		let look_up = state.controls.get_action_state(controls::Action::LookUp);
+		let look_down = state.controls.get_action_state(controls::Action::LookDown);
+
+		if look_left > 0.1 || look_right > 0.1 || look_up > 0.1 || look_down > 0.1
+		{
+			self.time_to_snap_camera = state.time() + 3.0;
+		}
+
+		let forward = self.camera_target.rot * (-Vector3::z());
+		let right = Unit::new_normalize(Vector3::new(-forward.z, 0., forward.x));
+		let up = Unit::new_normalize(Vector3::y());
+
+		let rot_horiz = UnitQuaternion::from_axis_angle(
+			&up,
+			state.options.camera_speed * DT * (look_left - look_right),
+		);
+		let mut rot_vert = UnitQuaternion::from_axis_angle(
+			&right,
+			state.options.camera_speed * DT * (look_up - look_down),
+		);
+		if forward.dot(&up) > 0.99 && (look_up - look_down) > 0.
+		{
+			rot_vert = UnitQuaternion::identity();
+		}
+		if forward.dot(&up) < -0.99 && (look_up - look_down) < 0.
+		{
+			rot_vert = UnitQuaternion::identity();
+		}
+		self.camera_target.rot = rot_horiz * rot_vert * self.camera_target.rot;
+
 		// Player.
 		if self.world.contains(self.player)
 		{
@@ -600,16 +671,6 @@ impl Map
 				.controls
 				.get_action_state(controls::Action::MoveBackward);
 
-			let look_left = state.controls.get_action_state(controls::Action::LookLeft);
-			let look_right = state.controls.get_action_state(controls::Action::LookRight);
-			let look_up = state.controls.get_action_state(controls::Action::LookUp);
-			let look_down = state.controls.get_action_state(controls::Action::LookDown);
-
-			if look_left > 0.1 || look_right > 0.1 || look_up > 0.1 || look_down > 0.1
-			{
-				self.time_to_snap_camera = state.time() + 3.0;
-			}
-
 			let jump = state.controls.get_action_state(controls::Action::Jump);
 
 			let mut controller = self
@@ -621,28 +682,6 @@ impl Map
 				state.controls.get_action_state(controls::Action::Reproduce) > 0.5;
 
 			let position = self.world.get::<&comps::Position>(self.player).unwrap();
-
-			let forward = self.camera_target.rot * (-Vector3::z());
-			let right = Unit::new_normalize(Vector3::new(-forward.z, 0., forward.x));
-			let up = Unit::new_normalize(Vector3::y());
-
-			let rot_horiz = UnitQuaternion::from_axis_angle(
-				&up,
-				state.options.camera_speed * DT * (look_left - look_right),
-			);
-			let mut rot_vert = UnitQuaternion::from_axis_angle(
-				&right,
-				state.options.camera_speed * DT * (look_up - look_down),
-			);
-			if forward.dot(&up) > 0.99 && (look_up - look_down) > 0.
-			{
-				rot_vert = UnitQuaternion::identity();
-			}
-			if forward.dot(&up) < -0.99 && (look_up - look_down) < 0.
-			{
-				rot_vert = UnitQuaternion::identity();
-			}
-			self.camera_target.rot = rot_horiz * rot_vert * self.camera_target.rot;
 
 			let forward2 = self.camera_target.rot * (Vector3::z());
 			let forward2 = Vector3::new(forward2.x, 0., forward2.z).normalize();
@@ -665,9 +704,30 @@ impl Map
 			self.camera_target.pos = position.pos;
 			self.camera_target.scale = position.scale;
 		}
+		else
+		{
+			let mut found_id = None;
+			for (id, animal) in self.world.query::<&comps::Animal>().iter()
+			{
+				if animal.kind == self.player_kind
+				{
+					found_id = Some(id);
+				}
+			}
+			if let Some(id) = found_id
+			{
+				self.world.remove_one::<comps::AI>(id)?;
+				self.player = id;
+			}
+			else
+			{
+				self.camera_target.pos = Point3::origin();
+				self.camera_target.scale = 1.;
+			}
+		}
 
 		// AI.
-		for (_, (position, controller, _animal, ai)) in self
+		for (_, (position, controller, animal, ai)) in self
 			.world
 			.query::<(
 				&comps::Position,
@@ -679,12 +739,17 @@ impl Map
 		{
 			controller.want_move = Vector3::zeros();
 			controller.want_jump = false;
+			controller.want_reproduce = false;
 
 			let mut new_state = None;
 			match &mut ai.state
 			{
 				comps::AIState::Idle =>
 				{
+					if animal.fat > 1
+					{
+						controller.want_reproduce = true;
+					}
 					let mut best_distance = f32::INFINITY;
 					let mut best_food = None;
 					for (food_id, (food_position, _)) in self
@@ -783,7 +848,7 @@ impl Map
 			.query::<(&comps::Position, &mut comps::Controller, &mut comps::Animal)>()
 			.iter()
 		{
-			controller.power = (1. + animal.muscle as f32).powf(2.);
+			controller.power = 1. + animal.muscle as f32;
 			if animal.fat > 1 && controller.want_reproduce
 			{
 				let fat = animal.fat;
@@ -791,16 +856,17 @@ impl Map
 				animal.muscle = 0;
 				animal.new_size = 1.;
 
-				animals_to_add.push((position.pos, fat));
+				animals_to_add.push((position.pos, fat, animal.kind));
 			}
 		}
-		for (pos, fat) in animals_to_add
+		for (pos, fat, kind) in animals_to_add
 		{
 			let mut rng = thread_rng();
 			for _ in 0..fat
 			{
 				let entity = spawn_animal(
 					pos + Vector3::new(rng.gen_range(-1.0..1.), 0., rng.gen_range(-1.0..1.)) * 0.1,
+					kind,
 					state,
 					&mut self.physics,
 					&mut self.world,
@@ -838,7 +904,7 @@ impl Map
 						{
 							if let Ok(animal) = self.world.get::<&comps::Animal>(other_id)
 							{
-								crash = animal.size > 4.;
+								crash = animal.size >= 2.;
 							}
 						}
 						if !crash
@@ -996,7 +1062,7 @@ impl Map
 		}
 
 		// Animal.
-		for (_, (pos, animal, physics)) in self
+		for (_, (position, animal, physics)) in self
 			.world
 			.query::<(&mut comps::Position, &mut comps::Animal, &comps::Physics)>()
 			.iter()
@@ -1009,7 +1075,7 @@ impl Map
 			}
 
 			animal.size += (animal.new_size - animal.size).signum() * change;
-			pos.scale = animal.size;
+			position.scale = animal.size;
 
 			let body = &self.physics.rigid_body_set[physics.handle];
 			let collider = self
@@ -1021,6 +1087,15 @@ impl Map
 			collider.set_shape(SharedShape::new(Ball {
 				radius: 0.5 * animal.size,
 			}));
+		}
+
+		// Abyss
+		for (id, position) in self.world.query::<&mut comps::Position>().iter()
+		{
+			if position.pos.y < -5.
+			{
+				to_die.push(id);
+			}
 		}
 
 		// Remove dead entities
@@ -1248,6 +1323,79 @@ impl Map
 		state
 			.core
 			.set_blender(BlendOperation::Add, BlendMode::One, BlendMode::InverseAlpha);
+
+		let ortho_mat =
+			Matrix4::new_orthographic(0., state.buffer_width(), state.buffer_height(), 0., -1., 1.);
+		state
+			.core
+			.use_projection_transform(&utils::mat4_to_transform(ortho_mat));
+
+		let h = 200.;
+
+		let mut x = state.buffer_width() / 2. - h;
+		let y = 32.;
+
+		for kind in [
+			comps::AnimalKind::Rhino,
+			comps::AnimalKind::Zebra,
+			comps::AnimalKind::Cat,
+		]
+		{
+			let icon = state.get_bitmap(kind.icon())?;
+			state.core.draw_bitmap(icon, x, y, Flag::zero());
+
+			let mut count = 0;
+			for (_, animal) in self.world.query::<&comps::Animal>().iter()
+			{
+				if animal.kind == kind
+				{
+					count += 1;
+				}
+			}
+
+			state.core.draw_text(
+				state.ui_font.as_ref().unwrap(),
+				Color::from_rgb_f(1., 0.8, 1.),
+				x + 48.,
+				y,
+				FontAlign::Centre,
+				&format!("{}", count),
+			);
+
+			x += h;
+		}
+
+		if self.world.contains(self.player)
+		{
+			let animal = self.world.get::<&comps::Animal>(self.player)?;
+
+			let x = 64.;
+			let y = state.buffer_height() - 48.;
+			let icon = state.get_bitmap("data/fat_icon.png")?;
+			state.core.draw_bitmap(icon, x, y, Flag::zero());
+
+			state.core.draw_text(
+				state.ui_font.as_ref().unwrap(),
+				Color::from_rgb_f(1., 0.8, 1.),
+				x + 48.,
+				y,
+				FontAlign::Centre,
+				&format!("{}", animal.fat),
+			);
+			let x = state.buffer_width() - 64. - 48.;
+			let icon = state.get_bitmap("data/muscle_icon.png")?;
+			state.core.draw_bitmap(icon, x, y, Flag::zero());
+
+			state.core.draw_text(
+				state.ui_font.as_ref().unwrap(),
+				Color::from_rgb_f(1., 0.8, 1.),
+				x + 48.,
+				y,
+				FontAlign::Centre,
+				&format!("{}", animal.muscle),
+			);
+		}
+
 		Ok(())
 	}
 }
