@@ -775,12 +775,27 @@ impl Map
 					}
 					if let Some((food_id, food_pos)) = best_food
 					{
+						let dist_fn = |from: &scene::NavNode, to: &scene::NavNode| {
+							let dist = (from.get_pos() - to.get_pos()).norm();
+							let v1 = to.triangle[1] - to.triangle[0];
+							let v2 = to.triangle[2] - to.triangle[0];
+							let normal = v1.cross(&v2).normalize();
+							if normal.dot(&Vector3::y()).abs() < 0.4
+							{
+								if (to.get_pos().y - position.pos.y > 0.5)
+									|| (to.get_pos().y - position.pos.y > 1. && animal.size > 1.3)
+								{
+									return std::f32::INFINITY;
+								}
+							}
+							dist
+						};
 						let mut path = astar::AStarContext::new(&self.navmesh).solve(
 							position.pos,
 							food_pos,
-							|from, to| (from.get_pos() - to.get_pos()).norm(),
+							dist_fn,
 						);
-						path.insert(0, food_pos);
+						path[0] = food_pos;
 						path.pop();
 						if !path.is_empty()
 						{

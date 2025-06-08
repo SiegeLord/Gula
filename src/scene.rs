@@ -47,8 +47,8 @@ pub struct Mesh
 #[derive(Clone, Debug)]
 pub struct NavNode
 {
-	triangle: [Point3<f32>; 3],
-	neighbours: Vec<i32>,
+	pub triangle: [Point3<f32>; 3],
+	pub neighbours: Vec<i32>,
 }
 
 #[derive(Clone, Debug)]
