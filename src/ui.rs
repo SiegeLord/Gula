@@ -6,8 +6,8 @@ use allegro_font::*;
 use allegro_sys::*;
 use nalgebra::{Matrix4, Point2, Vector2, Vector3};
 
-pub const UNSELECTED: Color = Color::from_rgb_f(0.9, 0.4, 0.9);
-pub const LABEL: Color = Color::from_rgb_f(0.7 * 0.9, 0.7 * 0.4, 0.7 * 0.9);
+pub const UNSELECTED: Color = Color::from_rgb_f(0.9, 0.7, 0.7);
+pub const LABEL: Color = Color::from_rgb_f(0.7 * 0.9, 0.7 * 0.7, 0.7 * 0.7);
 pub const SELECTED: Color = Color::from_rgb_f(1., 1., 1.);
 
 pub const HORIZ_SPACE: f32 = 16.;
