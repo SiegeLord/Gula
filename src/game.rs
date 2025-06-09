@@ -539,7 +539,7 @@ impl Map
 		let mut physics = Physics::new();
 		state
 			.sfx
-			.play_music("data/BANANAS - gameplay 1.0.ogg", 0.25, &state.core);
+			.play_music("data/BANANAS - Gameplay 1.2.ogg", 0.25, &state.core);
 
 		game_state::cache_scene(state, "data/sphere.glb")?;
 		game_state::cache_scene(state, "data/sky.glb")?;

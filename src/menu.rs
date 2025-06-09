@@ -25,6 +25,9 @@ impl Menu
 		state.sfx.cache_sample("data/ui1.ogg")?;
 		state.sfx.cache_sample("data/ui2.ogg")?;
 		state.cache_sprite("data/title.cfg")?;
+		state
+			.sfx
+			.play_music("data/BANANAS - Menu 1.2.ogg", 0.25, &state.core);
 
 		let mut subscreens = ui::SubScreens::new(state);
 		subscreens.push(ui::SubScreen::MainMenu(ui::MainMenu::new(state)?));
@@ -65,13 +68,16 @@ impl Menu
 		state.hide_mouse = false;
 		state.core.clear_to_color(Color::from_rgb_f(0., 0., 0.));
 		self.subscreens.draw(state);
-		let sprite = state.get_sprite("data/title.cfg")?;
-		sprite.draw_frame(
-			Point2::new(state.buffer_width() / 2., state.buffer_height() / 2. - 100.),
-			"Default",
-			0,
-			state,
-		);
+		if self.subscreens.subscreens.len() == 1
+		{
+			let sprite = state.get_sprite("data/title.cfg")?;
+			sprite.draw_frame(
+				Point2::new(state.buffer_width() / 2., state.buffer_height() / 2. - 100.),
+				"Default",
+				0,
+				state,
+			);
+		}
 
 		Ok(())
 	}

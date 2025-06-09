@@ -39,8 +39,11 @@ subdirectory). `run_msys.sh` may be useful for this purpose.
    which can be thought of as a texture layer.
 
 4. *tech rule #131: Incorporate the golden ratio (φ = 1.618) somewhere.* - The
-   animals grow in size in proportion to the golden ratio. Also, the game music
-   has musical phrases, length and such based on the golden ratio and fibonacci
+   animals grow in size in proportion to the golden ratio. In the
+   music, all phrases, proportions and melodies are mapped and based on
+   the golden ratio and on the Fibonacci sequence. The gameplay music
+   is in the key of F, tempo is 112.3 bpm and lasts 1.6 minutes. In the
+   menu music, the chord progression length grows in Fibonacci
    sequence.
 
 5. *bonus rule #36: Double or nothing* - Not used.
