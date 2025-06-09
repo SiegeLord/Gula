@@ -152,6 +152,36 @@ impl AnimalKind
 			AnimalKind::Rhino => "data/rhino_icon.png",
 		}
 	}
+
+	pub fn jump_sound(&self) -> &str
+	{
+		match self
+		{
+			AnimalKind::Cat => "data/cat_jump.ogg",
+			AnimalKind::Zebra => "data/zebra_jump.ogg",
+			AnimalKind::Rhino => "data/rhino_jump.ogg",
+		}
+	}
+
+	pub fn victory_message(&self) -> &str
+	{
+		match self
+		{
+			AnimalKind::Cat => "Victory! The lions are all the prey!",
+			AnimalKind::Zebra => "Victory! The zebras dazzled everyone!",
+			AnimalKind::Rhino => "Victory! The rhinos flipped the opposition!",
+		}
+	}
+
+	pub fn defeat_message(&self) -> &str
+	{
+		match self
+		{
+			AnimalKind::Cat => "Defeat! The lions roared their last roar!",
+			AnimalKind::Zebra => "Defeat! No more running for the zebras!",
+			AnimalKind::Rhino => "Defeat! No more horns for the rhinos!",
+		}
+	}
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -217,6 +247,18 @@ pub enum FoodKind
 	Fat,
 }
 
+impl FoodKind
+{
+	pub fn color(&self) -> Color
+	{
+		match self
+		{
+			FoodKind::Muscle => Color::from_rgb_f(0.9, 0.9, 0.0),
+			FoodKind::Fat => Color::from_rgb_f(0.9, 0.0, 0.0),
+		}
+	}
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct Food
 {
@@ -250,6 +292,24 @@ impl FoodSpawner
 			food: hecs::Entity::DANGLING,
 			time_to_spawn: 0.0,
 			waiting: true,
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct Message
+{
+	pub text: String,
+	pub time_to_show: f64,
+}
+
+impl Message
+{
+	pub fn new(text: &str, time_to_show: f64) -> Self
+	{
+		Self {
+			text: text.into(),
+			time_to_show: time_to_show,
 		}
 	}
 }

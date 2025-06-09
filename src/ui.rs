@@ -6,15 +6,15 @@ use allegro_font::*;
 use allegro_sys::*;
 use nalgebra::{Matrix4, Point2, Vector2, Vector3};
 
-pub const UNSELECTED: Color = Color::from_rgb_f(0.9, 0.9, 0.4);
-pub const LABEL: Color = Color::from_rgb_f(0.7 * 0.9, 0.7 * 0.9, 0.7 * 0.4);
+pub const UNSELECTED: Color = Color::from_rgb_f(0.9, 0.4, 0.9);
+pub const LABEL: Color = Color::from_rgb_f(0.7 * 0.9, 0.7 * 0.4, 0.7 * 0.9);
 pub const SELECTED: Color = Color::from_rgb_f(1., 1., 1.);
 
 pub const HORIZ_SPACE: f32 = 16.;
 pub const VERT_SPACE: f32 = 16.;
 pub const BUTTON_WIDTH: f32 = 128.;
 pub const BUTTON_HEIGHT: f32 = 16.;
-pub const CONTROL_WIDTH: f32 = 80.;
+pub const CONTROL_WIDTH: f32 = 150.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action
@@ -1242,10 +1242,11 @@ impl InGameMenu
 				"Options",
 				Action::Forward(|s| Ok(SubScreen::OptionsMenu(OptionsMenu::new(s)))),
 			))],
+			&[Widget::Button(Button::new(w, h, "Restart", Action::Start))],
 			&[Widget::Button(Button::new(
 				w,
 				h,
-				"Save and Quit",
+				"Quit to Menu",
 				Action::MainMenu,
 			))],
 		]);
@@ -1325,7 +1326,7 @@ pub struct SubScreens
 	pub time_to_transition: f64,
 }
 
-const TRANSITION_TIME: f64 = 0.25;
+const TRANSITION_TIME: f64 = 0.;
 
 impl SubScreens
 {
@@ -1357,7 +1358,7 @@ impl SubScreens
 		let f = f as f32;
 		let mut transform = Transform::identity();
 		transform.translate(0., state.buffer_height() * f);
-		state.core.use_transform(&transform);
+		//state.core.use_transform(&transform);
 		if let Some(subscreen) = self.subscreens.last()
 		{
 			subscreen.draw(state);

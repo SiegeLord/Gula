@@ -63,8 +63,15 @@ impl Menu
 	pub fn draw(&mut self, state: &mut game_state::GameState) -> Result<()>
 	{
 		state.hide_mouse = false;
-		state.core.clear_to_color(Color::from_rgb_f(0., 0., 0.5));
+		state.core.clear_to_color(Color::from_rgb_f(0., 0., 0.));
 		self.subscreens.draw(state);
+		let sprite = state.get_sprite("data/title.cfg")?;
+		sprite.draw_frame(
+			Point2::new(state.buffer_width() / 2., state.buffer_height() / 2. - 100.),
+			"Default",
+			0,
+			state,
+		);
 
 		Ok(())
 	}

@@ -25,6 +25,7 @@ use std::f32::consts::PI;
 use std::sync::RwLock;
 
 const GROW_TIME: f64 = 1.;
+const MESSAGE_TIME: f64 = 8.;
 const PHI: f32 = 1.618033988749;
 
 pub struct Game
@@ -115,6 +116,10 @@ impl Game
 					{
 						return Ok(Some(game_state::NextScreen::Menu));
 					}
+					ui::Action::Start =>
+					{
+						return Ok(Some(game_state::NextScreen::Game));
+					}
 					_ => (),
 				}
 			}
@@ -129,14 +134,17 @@ impl Game
 
 	pub fn draw(&mut self, state: &mut game_state::GameState) -> Result<()>
 	{
+		self.map.draw(state)?;
 		if !self.subscreens.is_empty()
 		{
-			state.core.clear_to_color(Color::from_rgb_f(0.0, 0.0, 0.0));
+			state.prim.draw_filled_rectangle(
+				0.,
+				0.,
+				state.buffer_width(),
+				state.buffer_height(),
+				Color::from_rgba_f(0., 0., 0., 0.75),
+			);
 			self.subscreens.draw(state);
-		}
-		else
-		{
-			self.map.draw(state)?;
 		}
 		Ok(())
 	}
@@ -160,6 +168,8 @@ pub fn spawn_animal(
 	};
 	game_state::cache_scene(state, scene_name)?;
 
+	let animal = comps::Animal::new(kind);
+	let init_size = animal.size;
 	let entity = world.spawn((
 		comps::Position::new(pos, UnitQuaternion::identity()),
 		comps::Scene {
@@ -167,7 +177,7 @@ pub fn spawn_animal(
 		},
 		comps::GroundTracker::new(),
 		comps::Controller::new(),
-		comps::Animal::new(kind),
+		animal,
 		comps::Light {
 			intensity: 105.0,
 			color: Color::from_rgb_f(1., 1., 1.),
@@ -179,8 +189,8 @@ pub fn spawn_animal(
 		.translation(pos.coords)
 		.user_data(entity.to_bits().get() as u128)
 		.build();
-	let collider = ColliderBuilder::ball(0.5)
-		.restitution(0.7)
+	let collider = ColliderBuilder::ball(init_size / 2.)
+		.restitution(0.8)
 		.user_data(entity.to_bits().get() as u128)
 		.active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
 		.build();
@@ -365,7 +375,7 @@ pub fn spawn_food(
 		},
 		comps::Light {
 			intensity: 105.0,
-			color: Color::from_rgb_f(0.9, 0.9, 0.0),
+			color: kind.color(),
 			static_: false,
 		},
 		comps::Food::new(pos, kind),
@@ -394,10 +404,17 @@ pub fn spawn_food_spawner(pos: Point3<f32>, world: &mut hecs::World) -> Result<h
 	Ok(entity)
 }
 
+pub fn spawn_message(text: &str, time_to_show: f64, world: &mut hecs::World)
+	-> Result<hecs::Entity>
+{
+	let entity = world.spawn((comps::Message::new(text, time_to_show),));
+	Ok(entity)
+}
+
 pub struct PhysicsEventHandler
 {
 	collision_events: RwLock<Vec<(CollisionEvent, Option<ContactPair>)>>,
-	contact_force_events: RwLock<Vec<ContactPair>>,
+	contact_force_events: RwLock<Vec<(f32, ContactPair)>>,
 }
 
 impl PhysicsEventHandler
@@ -421,19 +438,16 @@ impl EventHandler for PhysicsEventHandler
 		//let mut events = self.collision_events.write().unwrap();
 		//events.push((event, contact_pair.cloned()));
 	}
+
 	fn handle_contact_force_event(
 		&self, _dt: f32, _bodies: &RigidBodySet, _colliders: &ColliderSet,
 		contact_pair: &ContactPair, total_force_magnitude: f32,
 	)
 	{
-		if total_force_magnitude > 2000.0
-		{
-			dbg!(total_force_magnitude);
-			self.contact_force_events
-				.write()
-				.unwrap()
-				.push(contact_pair.clone());
-		}
+		self.contact_force_events
+			.write()
+			.unwrap()
+			.push((total_force_magnitude, contact_pair.clone()));
 	}
 }
 
@@ -495,6 +509,14 @@ impl Physics
 	}
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum State
+{
+	Playing,
+	Dead,
+	Won,
+}
+
 struct Map
 {
 	world: hecs::World,
@@ -506,6 +528,7 @@ struct Map
 	time_to_snap_camera: f64,
 	navmesh: Vec<scene::NavNode>,
 	show_path: bool,
+	state: State,
 }
 
 impl Map
@@ -514,15 +537,19 @@ impl Map
 	{
 		let mut world = hecs::World::new();
 		let mut physics = Physics::new();
+		state
+			.sfx
+			.play_music("data/BANANAS - gameplay 1.0.ogg", 0.25, &state.core);
 
 		game_state::cache_scene(state, "data/sphere.glb")?;
+		game_state::cache_scene(state, "data/sky.glb")?;
 		state.cache_bitmap("data/cat_icon.png")?;
 		state.cache_bitmap("data/zebra_icon.png")?;
 		state.cache_bitmap("data/rhino_icon.png")?;
 		state.cache_bitmap("data/fat_icon.png")?;
 		state.cache_bitmap("data/muscle_icon.png")?;
 
-		let level_scene_name = "data/level1.glb";
+		let level_scene_name = "data/level2.glb";
 		let level = spawn_level(level_scene_name, state, &mut physics, &mut world)?;
 
 		let level_scene = state.get_scene(level_scene_name).unwrap();
@@ -535,7 +562,7 @@ impl Map
 			{
 				scene::ObjectKind::Light { color, intensity } =>
 				{
-					println!("Spawning light at {:?}", object.position);
+					//println!("Spawning light at {:?}", object.position);
 					spawn_light(
 						object.position,
 						comps::Light {
@@ -577,7 +604,7 @@ impl Map
 
 		let mut player = None;
 		let mut player_kind = animals[0];
-		for i in 0..3
+		for i in 0..8
 		{
 			let kind = if i < animals.len()
 			{
@@ -611,6 +638,30 @@ impl Map
 			spawn_food_spawner(food_spawn, &mut world)?;
 		}
 
+		spawn_message(
+			&format!(
+				"Press {} to jump!",
+				state
+					.controls
+					.get_controls()
+					.get_action_string(controls::Action::Jump)
+			),
+			5.,
+			&mut world,
+		)?;
+		spawn_message(
+			&format!(
+				"Eat fat and press {} to reproduce!",
+				state
+					.controls
+					.get_controls()
+					.get_action_string(controls::Action::Reproduce)
+			),
+			15.,
+			&mut world,
+		)?;
+		spawn_message("Push others off the edge!", 25., &mut world)?;
+
 		Ok(Self {
 			world: world,
 			physics: physics,
@@ -621,6 +672,7 @@ impl Map
 			time_to_snap_camera: 0.,
 			navmesh: navmesh,
 			show_path: false,
+			state: State::Playing,
 		})
 	}
 
@@ -730,6 +782,19 @@ impl Map
 			}
 			else
 			{
+				if self.state == State::Playing
+				{
+					for (id, _) in self.world.query::<&comps::Message>().iter()
+					{
+						to_die.push(id);
+					}
+					spawn_message(
+						self.player_kind.defeat_message(),
+						state.time(),
+						&mut self.world,
+					)?;
+					self.state = State::Dead;
+				}
 				self.camera_target.pos = Point3::origin();
 				self.camera_target.scale = 1.;
 			}
@@ -828,7 +893,7 @@ impl Map
 							controller.want_move = Vector3::new(diff_horiz.x, 0., diff_horiz.y);
 							let mut rng = thread_rng();
 							if ((next_pos.xz() - position.pos.xz()).norm() < 2. && diff.y > 0.5)
-								|| rng.gen_bool((0.2 * DT) as f64)
+								|| rng.gen_bool((0.1 * DT) as f64)
 							{
 								controller.want_jump = true;
 							}
@@ -842,10 +907,23 @@ impl Map
 			}
 		}
 
+		// Friction.
+		for (id, (position, physics)) in self
+			.world
+			.query::<(&comps::Position, &mut comps::Physics)>()
+			.iter()
+		{
+			let f = if id == self.player { 0.2 } else { 0.5 };
+			let body = &mut self.physics.rigid_body_set[physics.handle];
+			body.reset_forces(true);
+			body.add_force(-f * body.velocity_at_point(&position.pos), true);
+		}
+
 		// Controller.
-		for (_, (controller, physics, ground_tracker)) in self
+		for (id, (position, controller, physics, ground_tracker)) in self
 			.world
 			.query::<(
+				&comps::Position,
 				&mut comps::Controller,
 				&comps::Physics,
 				&comps::GroundTracker,
@@ -856,14 +934,23 @@ impl Map
 			let force = 1. * controller.power;
 			let jump_impulse = 2. * controller.power;
 
-			body.reset_forces(true);
 			body.add_force(controller.want_move * force, true);
 			if ground_tracker.on_ground
 			{
-				body.apply_impulse(
-					Vector3::new(0., controller.want_jump as i32 as f32, 0.) * jump_impulse,
-					true,
-				);
+				if controller.want_jump
+				{
+					body.apply_impulse(Vector3::y() * jump_impulse, true);
+					if let Ok(animal) = self.world.get::<&comps::Animal>(id)
+					{
+						state.sfx.play_positional_sound_3d(
+							animal.kind.jump_sound(),
+							position.pos,
+							self.camera_pos(0.),
+							self.camera_target.rot,
+							1. / animal.size.sqrt(),
+						)?;
+					}
+				}
 			}
 		}
 
@@ -874,7 +961,7 @@ impl Map
 			.query::<(&comps::Position, &mut comps::Controller, &mut comps::Animal)>()
 			.iter()
 		{
-			controller.power = 1. + (0.5 * animal.muscle as f32 + 0.75 * animal.size).powf(3.);
+			controller.power = 1. + (0.25 * animal.muscle as f32 + 0.75 * animal.size).powf(3.);
 			if animal.fat > 1 && controller.want_reproduce
 			{
 				let fat = animal.fat;
@@ -883,6 +970,13 @@ impl Map
 				animal.new_size = 1.;
 
 				animals_to_add.push((position.pos, fat - 1, animal.kind));
+				state.sfx.play_positional_sound_3d(
+					"data/reproduce.ogg",
+					position.pos,
+					self.camera_pos(0.),
+					self.camera_target.rot,
+					1. / animal.size.sqrt(),
+				)?;
 			}
 		}
 		for (pos, fat, kind) in animals_to_add
@@ -909,7 +1003,8 @@ impl Map
 			let mut shards = vec![];
 			{
 				let level_physics = self.world.get::<&comps::Physics>(self.level).unwrap();
-				for contact_pair in handler.contact_force_events.read().unwrap().iter()
+				for (total_force_magnitude, contact_pair) in
+					handler.contact_force_events.read().unwrap().iter()
 				{
 					let level_collider_handle =
 						self.physics.rigid_body_set[level_physics.handle].colliders()[0];
@@ -924,12 +1019,23 @@ impl Map
 						}
 						let other_body = &self.physics.rigid_body_set
 							[self.physics.collider_set[other_handle].parent().unwrap()];
-
+						let center = other_body.translation();
 						let mut crash = false;
 						if let Some(other_id) = hecs::Entity::from_bits(other_body.user_data as u64)
 						{
 							if let Ok(animal) = self.world.get::<&comps::Animal>(other_id)
 							{
+								if *total_force_magnitude > 100. * animal.size.powf(3.)
+								{
+									state.sfx.play_positional_sound_3d(
+										"data/land.ogg",
+										Point3::origin() + center,
+										self.camera_pos(0.),
+										self.camera_target.rot,
+										1.,
+									)?;
+								}
+
 								crash = animal.size >= 6.;
 							}
 						}
@@ -941,7 +1047,13 @@ impl Map
 						to_die.push(self.level);
 
 						let num_shards = 6;
-						let center = other_body.translation();
+						state.sfx.play_positional_sound_3d(
+							"data/crash.ogg",
+							Point3::origin() + center,
+							self.camera_pos(0.),
+							self.camera_target.rot,
+							1.,
+						)?;
 						let rot = UnitQuaternion::from_axis_angle(
 							&Unit::new_normalize(Vector3::y()),
 							2. * PI / (num_shards as f32),
@@ -977,6 +1089,19 @@ impl Map
 					}
 				}
 			}
+			if !shards.is_empty()
+			{
+				for (id, _) in self.world.query::<&comps::Message>().iter()
+				{
+					to_die.push(id);
+				}
+				spawn_message(
+					"Got too fat and broke the world!",
+					state.time(),
+					&mut self.world,
+				)?;
+				self.state = State::Dead;
+			}
 			for (name, scene) in shards
 			{
 				state.insert_scene(&name, scene);
@@ -984,14 +1109,14 @@ impl Map
 			}
 		}
 
-		for (_, (pos, physics)) in self
+		for (_, (position, physics)) in self
 			.world
 			.query::<(&mut comps::Position, &comps::Physics)>()
 			.iter()
 		{
 			let body = &self.physics.rigid_body_set[physics.handle];
-			pos.pos = Point3::from(*body.translation());
-			pos.rot = *body.rotation();
+			position.pos = Point3::from(*body.translation());
+			position.rot = *body.rotation();
 		}
 
 		if self.world.contains(self.level)
@@ -1007,7 +1132,7 @@ impl Map
 				let obj_collider_handle = obj_body.colliders()[0];
 				let level_collider_handle = level_body.colliders()[0];
 
-				ground_tracker.on_ground = false;
+				let mut found_ground = false;
 				if let Some(contact_pair) = self
 					.physics
 					.narrow_phase
@@ -1021,12 +1146,20 @@ impl Map
 							{
 								if point.local_p1.y < position.pos.y - 0.2
 								{
-									ground_tracker.on_ground = true;
+									found_ground = true;
 								}
 							}
 						}
 					}
 				}
+				ground_tracker.on_ground = found_ground;
+			}
+		}
+		else
+		{
+			for (_, ground_tracker) in self.world.query::<&mut comps::GroundTracker>().iter()
+			{
+				ground_tracker.on_ground = false;
 			}
 		}
 
@@ -1060,14 +1193,14 @@ impl Map
 			food_spawner.food = food;
 		}
 
-		for (id, (pos, food, sensor)) in self
+		for (id, (position, food, sensor)) in self
 			.world
 			.query::<(&mut comps::Position, &comps::Food, &comps::Sensor)>()
 			.iter()
 		{
-			pos.pos =
+			position.pos =
 				food.spawn_pos + Vector3::new(0., 0.25 * (5. * state.time()).cos() as f32, 0.);
-			pos.rot = UnitQuaternion::from_axis_angle(
+			position.rot = UnitQuaternion::from_axis_angle(
 				&Unit::new_normalize(Vector3::y()),
 				((5. * state.time()) % (2. * PI as f64)) as f32,
 			);
@@ -1103,7 +1236,13 @@ impl Map
 									animal.new_size *= PHI.sqrt();
 								}
 							}
-							dbg!(animal.new_size);
+							state.sfx.play_positional_sound_3d(
+								"data/eat.ogg",
+								position.pos,
+								self.camera_pos(0.),
+								self.camera_target.rot,
+								1.,
+							)?;
 							break;
 						}
 					}
@@ -1111,12 +1250,18 @@ impl Map
 			}
 		}
 
+		let mut see_non_player_kind = false;
 		// Animal.
 		for (_, (position, animal, physics)) in self
 			.world
 			.query::<(&mut comps::Position, &mut comps::Animal, &comps::Physics)>()
 			.iter()
 		{
+			if animal.kind != self.player_kind
+			{
+				see_non_player_kind = true;
+			}
+
 			let change = DT / GROW_TIME as f32;
 			if (animal.size - animal.new_size).abs() < change
 			{
@@ -1138,11 +1283,36 @@ impl Map
 				radius: 0.5 * animal.size,
 			}));
 		}
+		if !see_non_player_kind && self.state == State::Playing
+		{
+			self.state = State::Won;
+			for (id, _) in self.world.query::<&comps::Message>().iter()
+			{
+				to_die.push(id);
+			}
+			spawn_message(
+				self.player_kind.victory_message(),
+				state.time(),
+				&mut self.world,
+			)?;
+		}
 
 		// Abyss
 		for (id, position) in self.world.query::<&mut comps::Position>().iter()
 		{
 			if position.pos.y < -10.
+			{
+				if self.world.get::<&comps::Animal>(id).is_ok()
+				{
+					state.sfx.play_sound("data/death.ogg")?;
+				}
+				to_die.push(id);
+			}
+		}
+
+		for (id, message) in self.world.query::<&comps::Message>().iter()
+		{
+			if state.time() > message.time_to_show + MESSAGE_TIME
 			{
 				to_die.push(id);
 			}
@@ -1248,6 +1418,25 @@ impl Map
 			}
 			state.get_bitmap(texture_name)
 		};
+
+		let shift = Isometry3 {
+			translation: self.camera_pos(state.alpha).coords.into(),
+			rotation: UnitQuaternion::identity(),
+		}
+		.to_homogeneous();
+
+		state
+			.core
+			.use_transform(&utils::mat4_to_transform(camera.to_homogeneous() * shift));
+		state
+			.core
+			.set_shader_transform("model_matrix", &utils::mat4_to_transform(shift))
+			.ok();
+
+		state
+			.get_scene("data/sky.glb")
+			.unwrap()
+			.draw(&state.core, &state.prim, material_mapper);
 
 		for (_, (position, scene)) in self
 			.world
@@ -1392,7 +1581,12 @@ impl Map
 		]
 		{
 			let icon = state.get_bitmap(kind.icon())?;
-			state.core.draw_bitmap(icon, x, y, Flag::zero());
+			state.core.draw_bitmap(
+				icon,
+				x,
+				y + (4. * (2. * state.time() + x as f64).cos() as f32).floor(),
+				Flag::zero(),
+			);
 
 			let mut count = 0;
 			for (_, animal) in self.world.query::<&comps::Animal>().iter()
@@ -1422,7 +1616,12 @@ impl Map
 			let x = 64.;
 			let y = state.buffer_height() - 48.;
 			let icon = state.get_bitmap("data/fat_icon.png")?;
-			state.core.draw_bitmap(icon, x, y, Flag::zero());
+			state.core.draw_bitmap(
+				icon,
+				x,
+				y + (4. * (2. * state.time()).cos() as f32).floor(),
+				Flag::zero(),
+			);
 
 			state.core.draw_text(
 				state.ui_font.as_ref().unwrap(),
@@ -1434,7 +1633,12 @@ impl Map
 			);
 			let x = state.buffer_width() - 64. - 48.;
 			let icon = state.get_bitmap("data/muscle_icon.png")?;
-			state.core.draw_bitmap(icon, x, y, Flag::zero());
+			state.core.draw_bitmap(
+				icon,
+				x,
+				y + (4. * (2. * state.time()).cos() as f32 + 3.).floor(),
+				Flag::zero(),
+			);
 
 			state.core.draw_text(
 				state.ui_font.as_ref().unwrap(),
@@ -1444,6 +1648,24 @@ impl Map
 				FontAlign::Centre,
 				&format!("{}", animal.muscle),
 			);
+		}
+
+		for (_, message) in self.world.query::<&comps::Message>().iter()
+		{
+			if state.time() > message.time_to_show
+			{
+				let x = state.buffer_width() / 2. + 16. * state.time().cos() as f32;
+				let y = state.buffer_height() / 2. + 16. * state.time().sin() as f32;
+
+				state.core.draw_text(
+					state.ui_font.as_ref().unwrap(),
+					Color::from_rgb_f(1., 1., 0.8),
+					x,
+					y,
+					FontAlign::Centre,
+					&message.text,
+				);
+			}
 		}
 
 		Ok(())

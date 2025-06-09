@@ -105,7 +105,7 @@ fn real_main() -> Result<()>
 	let mut old_frac_scale = state.options.frac_scale;
 	let mut switched_in = true;
 
-	let mut prev_frame_start = state.core.get_time();
+	let prev_frame_start = state.core.get_time();
 	let mut logic_end = prev_frame_start;
 	let mut frame_count = 0;
 	if state.options.grab_mouse
@@ -113,8 +113,8 @@ fn real_main() -> Result<()>
 		state.core.grab_mouse(&display).ok();
 	}
 
-	//let mut cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
-	let mut cur_screen = Screen::Game(game::Game::new(&mut state)?);
+	let mut cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
+	//let mut cur_screen = Screen::Game(game::Game::new(&mut state)?);
 	state.hide_mouse = true;
 
 	timer.start();
@@ -206,8 +206,8 @@ fn real_main() -> Result<()>
 
 			if frame_count == 120
 			{
-				println!("FPS: {:.2}", 120. / (frame_start - prev_frame_start));
-				prev_frame_start = frame_start;
+				//println!("FPS: {:.2}", 120. / (frame_start - prev_frame_start));
+				//prev_frame_start = frame_start;
 				frame_count = 0;
 			}
 			frame_count += 1;
