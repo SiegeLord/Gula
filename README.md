@@ -43,8 +43,8 @@ subdirectory). `run_msys.sh` may be useful for this purpose.
    music, all phrases, proportions and melodies are mapped and based on
    the golden ratio and on the Fibonacci sequence. The gameplay music
    is in the key of F, tempo is 112.3 bpm and lasts 1.6 minutes. In the
-   menu music, the chord progression length grows in Fibonacci
-   sequence.
+   menu music, the chord progression length grows in Fibonacci sequence
+   and lasting 0.6 minutes.
 
 5. *bonus rule #36: Double or nothing* - Not used.
 
