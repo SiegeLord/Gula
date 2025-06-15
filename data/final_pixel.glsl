@@ -1,6 +1,6 @@
 #version 330 core
 in vec2 varying_texcoord;
-layout(location = 0) out vec4 out_color;
+out vec4 out_color;
 
 uniform sampler2D al_tex; // Unused.
 uniform sampler2D position_buffer;

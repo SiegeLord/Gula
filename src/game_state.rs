@@ -234,6 +234,8 @@ impl GameState
 			self.buffer1 = Some(Bitmap::new(&self.core, buffer_width, buffer_height).unwrap());
 			self.buffer2 = Some(Bitmap::new(&self.core, buffer_width, buffer_height).unwrap());
 			self.deferred_renderer = Some(deferred::DeferredRenderer::new(
+				self._display.as_mut().unwrap(),
+				&self.prim,
 				buffer_width,
 				buffer_height,
 			)?);

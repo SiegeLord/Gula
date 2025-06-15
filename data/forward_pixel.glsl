@@ -5,10 +5,10 @@ in vec2 varying_texcoord;
 in vec2 varying_texcoord2;
 in vec4 varying_color;
 
-layout(location = 0) out vec3 position_buffer;
-layout(location = 1) out vec4 normal_buffer;
-layout(location = 2) out vec4 albedo_buffer;
-layout(location = 3) out vec4 light_buffer;
+layout(location=0) out vec3 position_buffer;
+layout(location=1) out vec4 normal_buffer;
+layout(location=2) out vec4 albedo_buffer;
+layout(location=3) out vec4 light_buffer;
 
 uniform sampler2D al_tex;
 uniform sampler2D lightmap;

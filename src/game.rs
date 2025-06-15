@@ -34,7 +34,6 @@ pub struct Game
 	map: Map,
 	subscreens: ui::SubScreens,
 	rect_vertex_buffer: VertexBuffer<Vertex>,
-	rect_index_buffer: IndexBuffer<u32>,
 }
 
 impl Game
@@ -59,18 +58,18 @@ impl Game
 					..vtx
 				},
 				Vertex {
-					x: 500.0,
+					x: 1.0,
 					y: 0.0,
 					..vtx
 				},
 				Vertex {
-					x: 500.0,
-					y: 500.0,
+					x: 1.0,
+					y: 1.0,
 					..vtx
 				},
 				Vertex {
 					x: 0.0,
-					y: 500.0,
+					y: 1.0,
 					..vtx
 				},
 			]),
@@ -79,20 +78,10 @@ impl Game
 		)
 		.unwrap();
 
-		let rect_index_buffer = IndexBuffer::<u32>::new(
-			state._display.as_mut().unwrap(),
-			&state.prim,
-			Some(&[0u32, 1, 2, 0, 2, 3]),
-			6,
-			BUFFER_STATIC,
-		)
-		.unwrap();
-
 		Ok(Self {
 			map: Map::new(state)?,
 			subscreens: ui::SubScreens::new(state),
 			rect_vertex_buffer: rect_vertex_buffer,
-			rect_index_buffer: rect_index_buffer,
 		})
 	}
 
@@ -192,13 +181,12 @@ impl Game
 			let mut transform = Transform::identity();
 			transform.scale(state.buffer_width(), state.buffer_height());
 			state.core.use_transform(&transform);
-			state.prim.draw_indexed_buffer(
+			state.prim.draw_vertex_buffer(
 				&self.rect_vertex_buffer,
 				Option::<&Bitmap>::None,
-				&self.rect_index_buffer,
 				0,
-				6,
-				PrimType::TriangleList,
+				4,
+				PrimType::TriangleFan,
 			);
 			state.core.use_transform(&Transform::identity());
 			self.subscreens.draw(state);

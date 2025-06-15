@@ -9,7 +9,7 @@ uniform sampler2D al_tex;
 void main()
 {
     if (al_use_tex)
-		color = varying_color * texture2D(al_tex, varying_texcoord);
+		color = varying_color * texture(al_tex, varying_texcoord);
     else
 		color = varying_color;
 }

@@ -1,18 +1,18 @@
 #version 330 core
-attribute vec4 al_pos;
-attribute vec4 al_color;
-attribute vec2 al_texcoord;
-attribute vec3 al_user_attr_0;  // normal
-attribute vec2 al_user_attr_1;  // uv2
+in vec4 al_pos;
+in vec4 al_color;
+in vec2 al_texcoord;
+in vec3 al_user_attr_0;  // normal
+in vec2 al_user_attr_1;  // uv2
 
 uniform mat4 al_projview_matrix;
 uniform mat4 model_matrix;
 
-varying vec3 varying_pos;
-varying vec3 varying_normal;
-varying vec2 varying_texcoord;
-varying vec2 varying_texcoord2;
-varying vec4 varying_color;
+out vec3 varying_pos;
+out vec3 varying_normal;
+out vec2 varying_texcoord;
+out vec2 varying_texcoord2;
+out vec4 varying_color;
 
 void main()
 {
