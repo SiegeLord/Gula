@@ -36,11 +36,12 @@ pub struct Material
 	pub desc: MaterialDesc,
 }
 
-#[derive(Clone, Debug)]
 pub struct Mesh
 {
 	pub vtxs: Vec<NormVertex>,
 	pub idxs: Vec<i32>,
+	pub vertex_buffer: VertexBuffer<NormVertex>,
+	pub index_buffer: IndexBuffer<u32>,
 	pub material: Option<Material>,
 }
 
@@ -51,7 +52,6 @@ pub struct NavNode
 	pub neighbours: Vec<i32>,
 }
 
-#[derive(Clone, Debug)]
 pub enum ObjectKind
 {
 	MultiMesh
@@ -70,7 +70,6 @@ pub enum ObjectKind
 	Empty,
 }
 
-#[derive(Clone, Debug)]
 pub struct Object
 {
 	pub name: String,
@@ -78,7 +77,6 @@ pub struct Object
 	pub kind: ObjectKind,
 }
 
-#[derive(Clone, Debug)]
 pub struct Scene
 {
 	pub objects: Vec<Object>,
@@ -86,7 +84,7 @@ pub struct Scene
 
 impl Scene
 {
-	pub fn load(gltf_file: &str) -> Result<Self>
+	pub fn load(display: &mut Display, prim: &PrimitivesAddon, gltf_file: &str) -> Result<Self>
 	{
 		let (document, buffers, _) = gltf::import(gltf_file)?;
 		let mut objects = vec![];
@@ -121,11 +119,11 @@ impl Scene
 			else if let Some(mesh) = node.mesh()
 			{
 				let mut meshes = vec![];
-				for prim in mesh.primitives()
+				for primitive in mesh.primitives()
 				{
 					let mut vtxs = vec![];
 					let mut idxs = vec![];
-					let reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
+					let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 					if let (
 						Some(pos_iter),
 						Some(gltf::mesh::util::ReadTexCoords::F32(uv_iter)),
@@ -186,7 +184,7 @@ impl Scene
 						}
 					}
 
-					let material = prim
+					let material = primitive
 						.material()
 						.name()
 						.map(|name| {
@@ -203,9 +201,15 @@ impl Scene
 								})
 							})
 						})?;
+
+					let (vertex_buffer, index_buffer) =
+						create_buffers(display, prim, &vtxs, &idxs)?;
+
 					meshes.push(Mesh {
 						vtxs: vtxs,
 						idxs: idxs,
+						vertex_buffer: vertex_buffer,
+						index_buffer: index_buffer,
 						material: material,
 					});
 				}
@@ -247,12 +251,12 @@ impl Scene
 							.unwrap_or(0)][..],
 					)
 					.ok();
-					prim.draw_indexed_prim(
-						&mesh.vtxs[..],
+					prim.draw_indexed_buffer(
+						&mesh.vertex_buffer,
 						mesh.material
 							.as_ref()
 							.and_then(|m| Some(bitmap_fn(&m, &m.desc.texture).unwrap())),
-						&mesh.idxs[..],
+						&mesh.index_buffer,
 						0,
 						mesh.idxs.len() as u32,
 						PrimType::TriangleList,
@@ -262,34 +266,69 @@ impl Scene
 		}
 	}
 
-	pub fn clip_meshes(&mut self, keep_triangle_fn: impl Fn(Vector3<f32>) -> bool)
+	pub fn clip_meshes(
+		&self, display: &mut Display, prim: &PrimitivesAddon,
+		keep_triangle_fn: impl Fn(Vector3<f32>) -> bool,
+	) -> Result<Scene>
 	{
-		for object in &mut self.objects
-		{
-			if let ObjectKind::MultiMesh { meshes } = &mut object.kind
-			{
-				for mesh in meshes
-				{
-					let mut new_indices = vec![];
-					for triangle in mesh.idxs.chunks(3)
-					{
-						let v1 = &mesh.vtxs[triangle[0] as usize];
-						let v2 = &mesh.vtxs[triangle[1] as usize];
-						let v3 = &mesh.vtxs[triangle[2] as usize];
+		let mut objects = vec![];
 
-						let centre = (Vector3::new(v1.x, v1.y, v1.z)
-							+ Vector3::new(v2.x, v2.y, v2.z)
-							+ Vector3::new(v3.x, v3.y, v3.z))
-							/ 3.;
-						if keep_triangle_fn(centre)
+		for object in &self.objects
+		{
+			let kind = match &object.kind
+			{
+				ObjectKind::Empty => ObjectKind::Empty,
+				ObjectKind::Light { intensity, color } => ObjectKind::Light {
+					intensity: *intensity,
+					color: *color,
+				},
+				ObjectKind::NavMesh { nodes } => ObjectKind::NavMesh {
+					nodes: nodes.clone(),
+				},
+				ObjectKind::MultiMesh { meshes } =>
+				{
+					let mut new_meshes = vec![];
+					for mesh in meshes
+					{
+						let mut new_indices = vec![];
+						for triangle in mesh.idxs.chunks(3)
 						{
-							new_indices.extend(triangle.iter().copied());
+							let v1 = &mesh.vtxs[triangle[0] as usize];
+							let v2 = &mesh.vtxs[triangle[1] as usize];
+							let v3 = &mesh.vtxs[triangle[2] as usize];
+
+							let centre = (Vector3::new(v1.x, v1.y, v1.z)
+								+ Vector3::new(v2.x, v2.y, v2.z)
+								+ Vector3::new(v3.x, v3.y, v3.z))
+								/ 3.;
+							if keep_triangle_fn(centre)
+							{
+								new_indices.extend(triangle.iter().copied());
+							}
 						}
+
+						let (vertex_buffer, index_buffer) =
+							create_buffers(display, prim, &mesh.vtxs, &new_indices)?;
+
+						new_meshes.push(Mesh {
+							vtxs: mesh.vtxs.clone(),
+							idxs: new_indices,
+							material: mesh.material.clone(),
+							vertex_buffer: vertex_buffer,
+							index_buffer: index_buffer,
+						});
 					}
-					mesh.idxs = new_indices;
+					ObjectKind::MultiMesh { meshes: new_meshes }
 				}
-			}
+			};
+			objects.push(Object {
+				name: object.name.clone(),
+				position: object.position,
+				kind: kind,
+			})
 		}
+
+		Ok(Scene { objects: objects })
 	}
 }
 
@@ -442,4 +481,22 @@ impl astar::Node for NavNode
 	{
 		&self.neighbours
 	}
+}
+
+fn create_buffers(
+	display: &mut Display, prim: &PrimitivesAddon, vtxs: &[NormVertex], idxs: &[i32],
+) -> Result<(VertexBuffer<NormVertex>, IndexBuffer<u32>)>
+{
+	let vertex_buffer =
+		VertexBuffer::new(display, prim, Some(&vtxs), vtxs.len() as u32, BUFFER_STATIC)
+			.map_err(|_| "Could not create vertex buffer".to_string())?;
+	let index_buffer = IndexBuffer::new(
+		display,
+		prim,
+		Some(&idxs.iter().map(|&i| i as u32).collect::<Vec<_>>()),
+		idxs.len() as u32,
+		BUFFER_STATIC,
+	)
+	.map_err(|_| "Could not create index buffer".to_string())?;
+	Ok((vertex_buffer, index_buffer))
 }

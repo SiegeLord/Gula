@@ -57,25 +57,27 @@ fn real_main() -> Result<()>
 		16,
 		DisplayOptionImportance::Suggest,
 	);
-	let mut display = Display::new(&state.core, state.options.width, state.options.height)
-		.map_err(|_| "Couldn't create display".to_string())?;
+	state.set_display(
+		Display::new(&state.core, state.options.width, state.options.height)
+			.map_err(|_| "Couldn't create display".to_string())?,
+	);
 
 	gl_loader::init_gl();
 	gl::load_with(|symbol| gl_loader::get_proc_address(symbol) as *const _);
 
-	let scale_shader = utils::load_shader(&mut display, "data/scale")?;
-	state.basic_shader = utils::load_shader(&mut display, "data/basic")?;
-	state.forward_shader = utils::load_shader(&mut display, "data/forward")?;
-	state.light_shader = utils::load_shader(&mut display, "data/light")?;
-	state.final_shader = utils::load_shader(&mut display, "data/final")?;
-	state.resize_display(&display)?;
+	let scale_shader = utils::load_shader(state.display_mut(), "data/scale")?;
+	state.basic_shader = Some(utils::load_shader(state.display_mut(), "data/basic")?);
+	state.forward_shader = Some(utils::load_shader(state.display_mut(), "data/forward")?);
+	state.light_shader = Some(utils::load_shader(state.display_mut(), "data/light")?);
+	state.final_shader = Some(utils::load_shader(state.display_mut(), "data/final")?);
+	state.resize_display()?;
 
 	let timer = Timer::new(&state.core, utils::DT as f64)
 		.map_err(|_| "Couldn't create timer".to_string())?;
 
 	let queue =
 		EventQueue::new(&state.core).map_err(|_| "Couldn't create event queue".to_string())?;
-	queue.register_event_source(display.get_event_source());
+	queue.register_event_source(state.display().get_event_source());
 	queue.register_event_source(
 		state
 			.core
@@ -110,7 +112,7 @@ fn real_main() -> Result<()>
 	let mut frame_count = 0;
 	if state.options.grab_mouse
 	{
-		state.core.grab_mouse(&display).ok();
+		state.core.grab_mouse(state.display()).ok();
 	}
 
 	let mut cur_screen = Screen::Menu(menu::Menu::new(&mut state)?);
@@ -122,14 +124,14 @@ fn real_main() -> Result<()>
 	{
 		if queue.is_empty()
 		{
-			if state.display_width != display.get_width() as f32
-				|| state.display_height != display.get_height() as f32
+			if state.display_width != state.display().get_width() as f32
+				|| state.display_height != state.display().get_height() as f32
 				|| old_ui_scale != state.options.ui_scale
 				|| old_frac_scale != state.options.frac_scale
 			{
 				old_ui_scale = state.options.ui_scale;
 				old_frac_scale = state.options.frac_scale;
-				state.resize_display(&display)?;
+				state.resize_display()?;
 				match &mut cur_screen
 				{
 					Screen::Game(game) => game.resize(&state),
@@ -154,26 +156,22 @@ fn real_main() -> Result<()>
 
 			state.core.set_target_bitmap(Some(state.buffer2()));
 
-			state
-				.core
-				.use_shader(Some(&*state.basic_shader.upgrade().unwrap()))
-				.unwrap();
+			state.core.use_shader(state.basic_shader.as_ref()).unwrap();
 
 			state
 				.core
 				.draw_bitmap(state.buffer1(), 0., 0., Flag::zero());
 
-			state.core.set_target_bitmap(Some(display.get_backbuffer()));
+			state
+				.core
+				.set_target_bitmap(Some(state.display().get_backbuffer()));
 
 			let bw = state.buffer_width() as f32;
 			let bh = state.buffer_height() as f32;
-			let dw = display.get_width() as f32;
-			let dh = display.get_height() as f32;
+			let dw = state.display().get_width() as f32;
+			let dh = state.display().get_height() as f32;
 
-			state
-				.core
-				.use_shader(Some(&*scale_shader.upgrade().unwrap()))
-				.unwrap();
+			state.core.use_shader(Some(&scale_shader)).unwrap();
 			state
 				.core
 				.set_shader_uniform("bitmap_width", &[bw][..])
@@ -231,7 +229,8 @@ fn real_main() -> Result<()>
 			Event::DisplayClose { .. } => quit = true,
 			Event::DisplayResize { .. } =>
 			{
-				display
+				state
+					.display()
 					.acknowledge_resize()
 					.map_err(|_| "Couldn't acknowledge resize".to_string())?;
 			}
@@ -239,7 +238,7 @@ fn real_main() -> Result<()>
 			{
 				if state.options.grab_mouse
 				{
-					state.core.grab_mouse(&display).ok();
+					state.core.grab_mouse(state.display()).ok();
 				}
 				state.track_mouse = true;
 			}
@@ -251,7 +250,8 @@ fn real_main() -> Result<()>
 				}
 				state.track_mouse = false;
 				switched_in = false;
-				display
+				state
+					.display()
 					.show_cursor(true)
 					.map_err(|_| "Could not hide cursor.".to_string())?;
 			}
@@ -259,12 +259,13 @@ fn real_main() -> Result<()>
 			{
 				if state.options.grab_mouse
 				{
-					state.core.grab_mouse(&display).ok();
+					state.core.grab_mouse(state.display()).ok();
 				}
 				state.track_mouse = true;
 				if !switched_in
 				{
-					display
+					state
+						.display()
 						.show_cursor(!state.hide_mouse)
 						.map_err(|_| "Could not hide cursor.".to_string())?;
 				}
@@ -297,21 +298,28 @@ fn real_main() -> Result<()>
 				{
 					state
 						.core
-						.set_mouse_xy(&display, display.get_width() / 2, display.get_height() / 2)
+						.set_mouse_xy(
+							state.display(),
+							state.display().get_width() / 2,
+							state.display().get_height() / 2,
+						)
 						.map_err(|_| "Couldn't set mouse position".to_string())?;
 				}
 
 				if old_mouse_hide != state.hide_mouse && switched_in
 				{
 					old_mouse_hide = state.hide_mouse;
-					display
+					state
+						.display()
 						.show_cursor(!state.hide_mouse)
 						.map_err(|_| "Could not hide cursor.".to_string())?;
 				}
 
 				if old_fullscreen != state.options.fullscreen
 				{
-					display.set_flag(FULLSCREEN_WINDOW, state.options.fullscreen);
+					state
+						.display()
+						.set_flag(FULLSCREEN_WINDOW, state.options.fullscreen);
 					old_fullscreen = state.options.fullscreen;
 				}
 

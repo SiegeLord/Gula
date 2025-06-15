@@ -91,11 +91,13 @@ pub struct GameState
 	pub buffer1: Option<Bitmap>,
 	pub buffer2: Option<Bitmap>,
 
-	pub basic_shader: sync::Weak<Shader>,
-	pub forward_shader: sync::Weak<Shader>,
-	pub light_shader: sync::Weak<Shader>,
-	pub final_shader: sync::Weak<Shader>,
+	pub basic_shader: Option<Shader>,
+	pub forward_shader: Option<Shader>,
+	pub light_shader: Option<Shader>,
+	pub final_shader: Option<Shader>,
 	pub deferred_renderer: Option<deferred::DeferredRenderer>,
+
+	pub _display: Option<Display>,
 
 	pub alpha: f32,
 }
@@ -163,11 +165,12 @@ impl GameState
 			track_mouse: true,
 			hide_mouse: false,
 			mouse_pos: Point2::new(0, 0),
-			basic_shader: Default::default(),
-			forward_shader: Default::default(),
-			light_shader: Default::default(),
-			final_shader: Default::default(),
+			basic_shader: None,
+			forward_shader: None,
+			light_shader: None,
+			final_shader: None,
 			deferred_renderer: None,
+			_display: None,
 			alpha: 0.,
 		})
 	}
@@ -197,12 +200,13 @@ impl GameState
 		self.ui_font.as_ref().unwrap()
 	}
 
-	pub fn resize_display(&mut self, display: &Display) -> Result<()>
+	pub fn resize_display(&mut self) -> Result<()>
 	{
 		const FIXED_BUFFER: bool = true;
 
 		let buffer_width;
 		let buffer_height;
+		let display = self._display.as_ref().unwrap();
 		if FIXED_BUFFER
 		{
 			buffer_width = 640;
@@ -273,7 +277,11 @@ impl GameState
 		let scene = match self.scenes.entry(name.to_string())
 		{
 			Entry::Occupied(o) => o.into_mut(),
-			Entry::Vacant(v) => v.insert(scene::Scene::load(name)?),
+			Entry::Vacant(v) => v.insert(scene::Scene::load(
+				&mut self._display.as_mut().unwrap(),
+				&self.prim,
+				name,
+			)?),
 		};
 		Ok(scene)
 	}
@@ -310,6 +318,21 @@ impl GameState
 	pub fn time(&self) -> f64
 	{
 		self.tick as f64 * utils::DT as f64
+	}
+
+	pub fn set_display(&mut self, display: Display)
+	{
+		self._display = Some(display);
+	}
+
+	pub fn display(&self) -> &Display
+	{
+		self._display.as_ref().unwrap()
+	}
+
+	pub fn display_mut(&mut self) -> &mut Display
+	{
+		self._display.as_mut().unwrap()
 	}
 }
 

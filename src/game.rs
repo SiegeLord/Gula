@@ -4,6 +4,7 @@ use crate::utils::DT;
 use crate::{astar, components as comps, controls, game_state, scene, sprite, ui, utils};
 use allegro::*;
 use allegro_font::*;
+use allegro_primitives::*;
 use na::{
 	Isometry3, Matrix4, Perspective3, Point2, Point3, Quaternion, RealField, Rotation2, Rotation3,
 	Similarity3, Unit, UnitQuaternion, Vector2, Vector3, Vector4,
@@ -32,15 +33,66 @@ pub struct Game
 {
 	map: Map,
 	subscreens: ui::SubScreens,
+	rect_vertex_buffer: VertexBuffer<Vertex>,
+	rect_index_buffer: IndexBuffer<u32>,
 }
 
 impl Game
 {
 	pub fn new(state: &mut game_state::GameState) -> Result<Self>
 	{
+		let vtx = Vertex {
+			x: 0.0,
+			y: 0.0,
+			z: 0.0,
+			color: Color::from_rgba_f(0., 0., 0., 0.75),
+			u: 0.,
+			v: 0.,
+		};
+		let rect_vertex_buffer = VertexBuffer::new(
+			state._display.as_mut().unwrap(),
+			&state.prim,
+			Some(&[
+				Vertex {
+					x: 0.0,
+					y: 0.0,
+					..vtx
+				},
+				Vertex {
+					x: 500.0,
+					y: 0.0,
+					..vtx
+				},
+				Vertex {
+					x: 500.0,
+					y: 500.0,
+					..vtx
+				},
+				Vertex {
+					x: 0.0,
+					y: 500.0,
+					..vtx
+				},
+			]),
+			4,
+			BUFFER_STATIC,
+		)
+		.unwrap();
+
+		let rect_index_buffer = IndexBuffer::<u32>::new(
+			state._display.as_mut().unwrap(),
+			&state.prim,
+			Some(&[0u32, 1, 2, 0, 2, 3]),
+			6,
+			BUFFER_STATIC,
+		)
+		.unwrap();
+
 		Ok(Self {
 			map: Map::new(state)?,
 			subscreens: ui::SubScreens::new(state),
+			rect_vertex_buffer: rect_vertex_buffer,
+			rect_index_buffer: rect_index_buffer,
 		})
 	}
 
@@ -137,13 +189,18 @@ impl Game
 		self.map.draw(state)?;
 		if !self.subscreens.is_empty()
 		{
-			state.prim.draw_filled_rectangle(
-				0.,
-				0.,
-				state.buffer_width(),
-				state.buffer_height(),
-				Color::from_rgba_f(0., 0., 0., 0.75),
+			let mut transform = Transform::identity();
+			transform.scale(state.buffer_width(), state.buffer_height());
+			state.core.use_transform(&transform);
+			state.prim.draw_indexed_buffer(
+				&self.rect_vertex_buffer,
+				Option::<&Bitmap>::None,
+				&self.rect_index_buffer,
+				0,
+				6,
+				PrimType::TriangleList,
 			);
+			state.core.use_transform(&Transform::identity());
 			self.subscreens.draw(state);
 		}
 		Ok(())
@@ -1062,16 +1119,20 @@ impl Map
 						let mut v1 = Vector3::x();
 						let mut v2 = rot * -v1;
 
+						let mut display = state._display.take();
 						let scene = state
 							.get_scene(&self.world.get::<&comps::Scene>(self.level)?.scene)
 							.unwrap();
 						for i in 0..6
 						{
-							let mut new_scene = scene.clone();
-							new_scene.clip_meshes(|tri_center| {
-								let diff = tri_center - center;
-								diff.dot(&v1) > 0. && diff.dot(&v2) > 0.
-							});
+							let mut new_scene = scene.clip_meshes(
+								display.as_mut().unwrap(),
+								&state.prim,
+								|tri_center| {
+									let diff = tri_center - center;
+									diff.dot(&v1) > 0. && diff.dot(&v2) > 0.
+								},
+							)?;
 							for object in &mut new_scene.objects
 							{
 								if let scene::ObjectKind::MultiMesh { meshes } = &mut object.kind
@@ -1086,6 +1147,7 @@ impl Map
 							v1 = rot * v1;
 							v2 = rot * v2
 						}
+						state._display = display;
 					}
 				}
 			}
@@ -1393,7 +1455,7 @@ impl Map
 			.begin_forward_pass(&state.core)?;
 		state
 			.core
-			.use_shader(Some(&*state.forward_shader.upgrade().unwrap()))
+			.use_shader(state.forward_shader.as_ref())
 			.unwrap();
 
 		let material_mapper = |material: &scene::Material, texture_name: &str| -> Result<&Bitmap> {
@@ -1500,7 +1562,7 @@ impl Map
 		// Light pass.
 		state.deferred_renderer.as_mut().unwrap().begin_light_pass(
 			&state.core,
-			state.light_shader.clone(),
+			state.light_shader.as_ref().unwrap(),
 			&utils::mat4_to_transform(project.to_homogeneous()),
 			self.camera_pos(state.alpha),
 		)?;
@@ -1547,14 +1609,11 @@ impl Map
 		state.deferred_renderer.as_mut().unwrap().final_pass(
 			&state.core,
 			&state.prim,
-			state.final_shader.clone(),
+			state.final_shader.as_ref().unwrap(),
 			state.buffer1.as_ref().unwrap(),
 		)?;
 
-		state
-			.core
-			.use_shader(Some(&*state.basic_shader.upgrade().unwrap()))
-			.unwrap();
+		state.core.use_shader(state.basic_shader.as_ref()).unwrap();
 		unsafe {
 			gl::Disable(gl::CULL_FACE);
 		}

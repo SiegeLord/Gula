@@ -216,7 +216,7 @@ impl DeferredRenderer
 	}
 
 	pub fn begin_light_pass(
-		&mut self, core: &Core, light_shader: sync::Weak<Shader>, projection: &Transform,
+		&mut self, core: &Core, light_shader: &Shader, projection: &Transform,
 		camera_pos: Point3<f32>,
 	) -> Result<()>
 	{
@@ -239,8 +239,7 @@ impl DeferredRenderer
 			gl::CullFace(gl::FRONT);
 		}
 
-		core.use_shader(Some(&*light_shader.upgrade().unwrap()))
-			.unwrap();
+		core.use_shader(Some(light_shader)).unwrap();
 
 		core.set_shader_uniform("position_buffer", &[0_i32][..])
 			.ok(); //unwrap();
@@ -269,8 +268,7 @@ impl DeferredRenderer
 	}
 
 	pub fn final_pass(
-		&mut self, core: &Core, prim: &PrimitivesAddon, final_shader: sync::Weak<Shader>,
-		buffer: &Bitmap,
+		&mut self, core: &Core, prim: &PrimitivesAddon, final_shader: &Shader, buffer: &Bitmap,
 	) -> Result<()>
 	{
 		core.set_target_bitmap(Some(buffer));
@@ -307,8 +305,7 @@ impl DeferredRenderer
 		core.use_projection_transform(&utils::mat4_to_transform(ortho_mat));
 		core.use_transform(&Transform::identity());
 
-		core.use_shader(Some(&*final_shader.upgrade().unwrap()))
-			.unwrap();
+		core.use_shader(Some(final_shader)).unwrap();
 
 		core.set_shader_uniform("position_buffer", &[1_i32][..])
 			.ok();
